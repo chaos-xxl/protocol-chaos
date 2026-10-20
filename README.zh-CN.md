@@ -10,30 +10,24 @@
 
 ## 五分钟试用
 
-需要 Node.js 20 或更高版本，以及一个能用 MCP 服务端的助手。
+需要 Node.js 20 或更高版本，以及一个能用 MCP 服务端的助手。把参考服务端加到你的助手里，名字用 `protocol_chaos`：
 
-```sh
-git clone https://github.com/chaos-xxl/protocol-chaos.git
-cd protocol-chaos
-npm ci
-```
-
-把参考服务端加到你的助手里，名字用 `protocol_chaos`，路径写 `server/index.mjs` 的绝对路径：
-
-- **Claude Code：** `claude mcp add --scope user protocol_chaos -- node /path/to/protocol-chaos/server/index.mjs`
+- **Claude Code：** `claude mcp add --scope user protocol_chaos -- npx -y protocol-chaos@0.2`
 - **Codex**，写在 `~/.codex/config.toml` 里：
 
   ```toml
   [mcp_servers.protocol_chaos]
-  command = "node"
-  args = ["/path/to/protocol-chaos/server/index.mjs"]
+  command = "npx"
+  args = ["-y", "protocol-chaos@0.2"]
   ```
 
 - **Claude Desktop、Cursor、Kiro** 等用 JSON 配置的客户端（`claude_desktop_config.json`、`~/.cursor/mcp.json`、`~/.kiro/settings/mcp.json`）：
 
   ```json
-  { "mcpServers": { "protocol_chaos": { "command": "node", "args": ["/path/to/protocol-chaos/server/index.mjs"] } } }
+  { "mcpServers": { "protocol_chaos": { "command": "npx", "args": ["-y", "protocol-chaos@0.2"] } } }
   ```
+
+`protocol-chaos@0.2` 跟着这一版草案和它的修复走，以后的草案会是 `0.3`。想从源码跑，就 `git clone`、`npm ci`，命令写成 `node /path/to/protocol-chaos/server/index.mjs`。
 
 然后跟一个助手说一件你在打算的事，比如「我想学街头摄影，不过只能周末去」。再打开另一个助手，或者开一个新对话，问它我说过摄影什么。这件事存在 `~/.protocol-chaos/repository.json` 里，一个普通的 JSON 文件，归你所有。
 
@@ -73,14 +67,13 @@ npm ci
 
 1. 读 [PROTOCOL.md](PROTOCOL.md)。先做 Core 级别；实体、搜索、同步、撤销、远程是可选级别（§12）。
 2. 把各项操作做成 MCP 工具（§9.1）：一台电脑用 stdio；几台电脑共用一个库时用 streamable HTTP，每个客户端一个凭证（§9.2）。
-3. 跑兼容性测试：
+3. 跑兼容性测试，不用克隆仓库：
 
    ```sh
-   npm ci
-   node conformance/run.mjs --stdio "node my-server.js --data {tmp}"
+   npx -y -p protocol-chaos@0.2 protocol-chaos-conformance --stdio "node my-server.js --data {tmp}"
    ```
 
-   套件每启动一个服务端，`{tmp}` 就换成一个新的空目录。测试会写数据，所以库不是空的就拒绝运行。
+   套件每启动一个服务端，`{tmp}` 就换成一个新的空目录。测试会写数据，所以库不是空的就拒绝运行。在克隆下来的仓库里，`node conformance/run.mjs` 接受同样的参数。
 
 规范的目标是光看它就够写出实现。我们验证过：一个从没见过任何实现的 Agent 只读这份文档写了一个服务端，第一次就通过了当时 40 项 Core 测试中的 39 项；它发现的那处缺口已经补进文档。这个服务端就是这里的参考服务端，`npm test` 会对它跑全部测试。
 

@@ -1,22 +1,49 @@
 {
-  "name": "protocol-chaos-reference",
+  "name": "protocol-chaos",
   "version": "0.2.0",
-  "private": true,
-  "description": "The Protocol Chaos specification, its conformance tests and a reference server",
+  "description": "Protocol Chaos: an open protocol for the matters a person holds, shared by every AI assistant they use. Reference MCP server, specification and conformance tests.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai-agents",
+    "ai-memory",
+    "protocol",
+    "personal-data"
+  ],
+  "author": "Xue Xinglong",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/chaos-xxl/protocol-chaos#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chaos-xxl/protocol-chaos.git"
+  },
+  "bugs": {
+    "url": "https://github.com/chaos-xxl/protocol-chaos/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "protocol-chaos-reference": "server/index.mjs"
+    "protocol-chaos": "server/index.mjs",
+    "protocol-chaos-conformance": "conformance/run.mjs"
   },
+  "files": [
+    "server/*.mjs",
+    "server/README.md",
+    "conformance/",
+    "docs/agent-guide.md",
+    "PROTOCOL.md",
+    "README.zh-CN.md",
+    "NOTICE"
+  ],
   "scripts": {
     "start": "node server/index.mjs",
     "test": "npm run test:server && npm run test:conformance",
     "test:server": "node --test server/test/store.test.mjs",
     "test:conformance": "node conformance/run.mjs --stdio \"node server/index.mjs --owner-tools --data {tmp}\"",
-    "conformance": "node conformance/run.mjs"
+    "conformance": "node conformance/run.mjs",
+    "prepublishOnly": "npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0"

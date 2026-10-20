@@ -10,30 +10,24 @@ Protocol Chaos is an open protocol for a common layer of the matters a person ho
 
 ## Try it in five minutes
 
-You need Node.js 20 or later and an assistant that can use MCP servers.
+You need Node.js 20 or later and an assistant that can use MCP servers. Add the reference server to your assistants under the name `protocol_chaos`:
 
-```sh
-git clone https://github.com/chaos-xxl/protocol-chaos.git
-cd protocol-chaos
-npm ci
-```
-
-Add the reference server to your assistants under the name `protocol_chaos`, with the absolute path of `server/index.mjs`:
-
-- **Claude Code:** `claude mcp add --scope user protocol_chaos -- node /path/to/protocol-chaos/server/index.mjs`
+- **Claude Code:** `claude mcp add --scope user protocol_chaos -- npx -y protocol-chaos@0.2`
 - **Codex**, in `~/.codex/config.toml`:
 
   ```toml
   [mcp_servers.protocol_chaos]
-  command = "node"
-  args = ["/path/to/protocol-chaos/server/index.mjs"]
+  command = "npx"
+  args = ["-y", "protocol-chaos@0.2"]
   ```
 
 - **Claude Desktop, Cursor, Kiro** and other clients configured in JSON (`claude_desktop_config.json`, `~/.cursor/mcp.json`, `~/.kiro/settings/mcp.json`):
 
   ```json
-  { "mcpServers": { "protocol_chaos": { "command": "node", "args": ["/path/to/protocol-chaos/server/index.mjs"] } } }
+  { "mcpServers": { "protocol_chaos": { "command": "npx", "args": ["-y", "protocol-chaos@0.2"] } } }
   ```
+
+`protocol-chaos@0.2` follows this draft and its fixes; a later draft will be `0.3`. To run it from a clone instead, use `git clone`, `npm ci`, and `node /path/to/protocol-chaos/server/index.mjs` as the command.
 
 Then tell one assistant about something you are planning, for example "I'd like to get into street photography, but only at weekends". Open another assistant, or a new conversation, and ask what you said about photography. The matter is in `~/.protocol-chaos/repository.json`, a plain JSON file that is yours.
 
@@ -73,14 +67,13 @@ Nothing here runs as a service. A server runs where its owner puts it: on their 
 
 1. Read [PROTOCOL.md](PROTOCOL.md). Start with the Core level; Entities, Search, Sync, Undo and Remote are optional levels (§12).
 2. Offer the operations as MCP tools (§9.1): over stdio for one computer, or over streamable HTTP with a credential for each client when several computers share a repository (§9.2).
-3. Run the conformance tests against it:
+3. Run the conformance tests against it, with no need to clone anything:
 
    ```sh
-   npm ci
-   node conformance/run.mjs --stdio "node my-server.js --data {tmp}"
+   npx -y -p protocol-chaos@0.2 protocol-chaos-conformance --stdio "node my-server.js --data {tmp}"
    ```
 
-   `{tmp}` becomes a fresh, empty directory for each server the suite starts. The tests write data, so they refuse to run against a repository that is not empty.
+   `{tmp}` becomes a fresh, empty directory for each server the suite starts. The tests write data, so they refuse to run against a repository that is not empty. From a clone, `node conformance/run.mjs` takes the same options.
 
 The specification is meant to be enough on its own. As a check, an agent that had never seen any implementation wrote a server from this document alone. Its first attempt passed 39 of the 40 Core tests of the time, and the one gap it found has been fixed in the document. That server is the reference server here; `npm test` runs every test against it.
 

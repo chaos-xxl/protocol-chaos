@@ -5,7 +5,8 @@ A small server that implements [draft 0.2](../PROTOCOL.md) at the levels Core, E
 It was written from the specification alone, by an agent that had never seen another implementation, as a test that the document is enough.
 
 ```sh
-node server/index.mjs [--data <directory>] [--owner-tools]
+npx -y protocol-chaos@0.2 [--data <directory>] [--owner-tools]
+node server/index.mjs [--data <directory>] [--owner-tools]     # from a clone
 ```
 
 | Option | |
