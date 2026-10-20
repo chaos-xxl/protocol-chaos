@@ -2,9 +2,11 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
-## protocol-chaos 0.2.1 (unreleased)
+## protocol-chaos 0.2.1 (2026-10-20)
 
 - Conformance tests: a server started with `npx`, from a test run that was itself started with `npx`, now starts. npm's own environment variables are no longer passed on to the server.
+- The reference server reports the package version it was released as.
+- The package carries the rewritten README.
 
 ## Draft 0.2 and protocol-chaos 0.2.0 (2026-10-20)
 
