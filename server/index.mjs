@@ -10,6 +10,7 @@
 //                conformance tests use them. Without them, the file itself is the export.
 //
 // Nothing but MCP messages is written to stdout, and nothing is logged.
+import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -372,8 +373,9 @@ const OWNER_TOOLS = new Set(['repository_export', 'repository_import']);
 const offered = TOOLS.filter((tool) => ownerTools || !OWNER_TOOLS.has(tool.name));
 const byName = new Map(offered.map((tool) => [tool.name, tool]));
 
+const { version } = createRequire(import.meta.url)('../package.json');
 const server = new Server(
-  { name: 'protocol-chaos-reference', version: '0.2.0' },
+  { name: 'protocol-chaos-reference', version },
   { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
 );
 

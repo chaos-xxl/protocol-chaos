@@ -37,7 +37,7 @@ cd "$WORKDIR/repo"
 printf 'tracked files: %s, commits: %s\n' "$(git ls-files | wc -l | tr -d ' ')" "$(git rev-list --all | wc -l | tr -d ' ')"
 
 step "Files a newcomer needs are present"
-for f in LICENSE NOTICE README.md README.zh-CN.md PROTOCOL.md docs/agent-guide.md conformance/README.md conformance/run.mjs server/README.md server/index.mjs package.json package-lock.json; do
+for f in LICENSE NOTICE README.md README.zh-CN.md PROTOCOL.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/agent-guide.md conformance/README.md conformance/run.mjs server/README.md server/index.mjs package.json package-lock.json; do
   test -f "$f" || fail "missing $f"
   printf '  ok  %s\n' "$f"
 done

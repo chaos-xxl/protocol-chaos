@@ -24,8 +24,11 @@ export class Skip extends Error {}
 /** Connects to a server: `stdio` is a shell command, `url` an MCP streamable HTTP endpoint. */
 export async function connect({ stdio, url, token }) {
   const client = new Client({ name: 'protocol-chaos-conformance', version: '0.2.0' });
+  // npm's own variables are not passed on: when this runner itself was started by npx,
+  // they would make an npx inside the server command run this package instead.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toLowerCase().startsWith('npm_')));
   const transport = stdio
-    ? new StdioClientTransport({ command: 'sh', args: ['-c', `exec ${stdio}`], env: { ...process.env }, stderr: 'ignore' })
+    ? new StdioClientTransport({ command: 'sh', args: ['-c', `exec ${stdio}`], env, stderr: 'ignore' })
     : new StreamableHTTPClientTransport(new URL(url), {
         requestInit: { headers: token ? { Authorization: `Bearer ${token}` } : {} },
       });

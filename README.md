@@ -1,18 +1,42 @@
-# Protocol Chaos · 混沌协议
+# Protocol Chaos
 
-**Your matters belong to you. Your AI can change.**
+[![npm](https://img.shields.io/npm/v/protocol-chaos?label=npm)](https://www.npmjs.com/package/protocol-chaos)
+[![Specification](https://img.shields.io/badge/specification-draft%200.2-informational)](PROTOCOL.md)
+[![Tests](https://github.com/chaos-xxl/protocol-chaos/actions/workflows/test.yml/badge.svg)](https://github.com/chaos-xxl/protocol-chaos/actions/workflows/test.yml)
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 
-Protocol Chaos is an open protocol for a common layer of the matters a person holds: the long-lived things they tell their AI assistants about, such as a trip, a course, a renovation, a decision or an ambition. The matters live in one repository the user controls. Any compatible assistant can read them, add to them and connect them, and they outlast any one assistant.
+English · [简体中文](README.zh-CN.md)
 
-[中文说明](README.zh-CN.md)
+**An open protocol for the matters in a person's life, held by the person and shared by every AI assistant they use.**
 
-> **Draft 0.2, October 2026.** The specification may still change, and drafts carry no compatibility promise. Comments and implementations are welcome.
+People tell their AI assistants about trips, renovations, job searches, purchases and ambitions. Each assistant keeps what it hears to itself, so the same plan is explained again to every new assistant and is lost when the tool changes. Protocol Chaos keeps these matters in one repository that belongs to the user. Any compatible assistant can read it, add to it and connect what it holds, and the matters outlast any one assistant.
 
-## Try it in five minutes
+With Protocol Chaos, an assistant can:
 
-You need Node.js 20 or later and an assistant that can use MCP servers. Add the reference server to your assistants under the name `protocol_chaos`:
+- **Pick up where another left off**: read what the user told a different assistant, on a different computer, weeks ago.
+- **Keep the user's words**: record them verbatim, and mark its own inferences as inferences.
+- **Connect matters**: place a trip under the wish it serves, and point it at the people it involves.
+- **Write alongside other assistants**: without overwriting what another has committed, with every change recorded.
 
-- **Claude Code:** `claude mcp add --scope user protocol_chaos -- npx -y protocol-chaos@0.2`
+```mermaid
+flowchart LR
+  claude[Claude] <--> server
+  codex[Codex] <--> server
+  cursor[Cursor] <--> server
+  app[Your own app] <--> server
+  server["A Protocol Chaos server<br/>any conforming implementation"] --- repo[("The user's repository<br/>Events · words · Entities · history")]
+```
+
+## Quick start
+
+You need Node.js 20 or later and an assistant that can use MCP servers. Add the reference server under the name `protocol_chaos`:
+
+- **Claude Code:**
+
+  ```sh
+  claude mcp add --scope user protocol_chaos -- npx -y protocol-chaos@0.2
+  ```
+
 - **Codex**, in `~/.codex/config.toml`:
 
   ```toml
@@ -27,75 +51,96 @@ You need Node.js 20 or later and an assistant that can use MCP servers. Add the 
   { "mcpServers": { "protocol_chaos": { "command": "npx", "args": ["-y", "protocol-chaos@0.2"] } } }
   ```
 
-`protocol-chaos@0.2` follows this draft and its fixes; a later draft will be `0.3`. To run it from a clone instead, use `git clone`, `npm ci`, and `node /path/to/protocol-chaos/server/index.mjs` as the command.
+Then tell one assistant about something you are planning, for example "I'd like to get into street photography, but only at weekends". Ask another assistant, or a new conversation, what you said about photography. The matter is stored in `~/.protocol-chaos/repository.json`, a plain file that belongs to you.
 
-Then tell one assistant about something you are planning, for example "I'd like to get into street photography, but only at weekends". Open another assistant, or a new conversation, and ask what you said about photography. The matter is in `~/.protocol-chaos/repository.json`, a plain JSON file that is yours.
+For the best results, give each assistant the [standing instructions](docs/agent-guide.md#server-instructions): MCP tells an assistant which tools exist, not when to use them. `protocol-chaos@0.2` follows this draft and its fixes; a later draft will be `0.3`.
 
-Give each assistant the standing instructions from the [agent guide](docs/agent-guide.md#server-instructions) too: MCP tells an assistant which tools exist, not when to use them.
+## Why Protocol Chaos?
 
-## Why
-
-Many people already use several assistants: one for daily life, one at work, another for code. Each keeps its own memory, but a person's matters do not split along those lines. The same plan is explained again to every new assistant, and it is lost when the tool changes.
-
-The matters are not isolated either. What looks like a one-off rarely is: a trip belongs to a wish to see more of the world, a camera serves a hobby, a move touches the whole family. Protocol Chaos keeps these matters, called **Events**, and the ways they connect, in one place that belongs to the user. Assistants come and go; they read the same repository and add to it, each under its own name.
+- **The user holds the matters.** The repository belongs to the user, not to an assistant or a vendor, and every conforming server can export it whole and import it elsewhere.
+- **Matters are connected.** What looks like a one-off rarely is: a trip belongs to a wish to see more of the world, a camera serves a hobby. Parents, and the people and places Events share, make those connections explicit.
+- **Words are evidence.** The user's words are kept verbatim and never edited. Everything an assistant concludes rests on them, and the user's words win.
+- **Sparse is normal.** A matter can be one sentence. Assistants record what was said instead of questioning the user to complete it.
+- **Small and testable.** The specification defines only what implementations must agree on, and every requirement on servers has a conformance test.
+- **Built on MCP.** Every operation is an MCP tool, so any MCP client can use a conforming server, written in any language.
 
 ## What the protocol defines
 
-The protocol standardises the envelope and leaves the content in natural language:
-
-- **Events**: a title, a state, where the Event stands, what it is meant to achieve, the conditions it must meet, the plan as decided, the people, places and things it involves, and the larger Events it is part of. An Event may hold nothing but one sentence: sparse is normal.
-- **The user's words**, kept verbatim and never edited. What an assistant infers is marked as an inference, with its basis, and the user's words win.
-- **Entities**: the people, animals, things and places the user refers to, the user included, each described by one-fact Statements.
-- **Revisions**: every change names who made it and the words it rests on.
-- **Rules for writers**: what to record and what not to, so that every assistant writing to the same repository behaves the same way.
-- **Export and import**: a repository can always be taken out whole and moved.
+| | |
+|---|---|
+| **Events** | A matter: its title, state and progress; its goal, constraint and plan, in natural language; the people, places and things it involves; and the larger Events it is part of. |
+| **Accounts** | The user's words an Event rests on, kept verbatim and never edited. |
+| **Entities** | The people, animals, things and places the user refers to, the user included, each described by one-fact Statements. |
+| **Revisions** | Every change, naming who made it and the words it rests on. |
+| **Writer rules** | What to record and what not to, so that every assistant writing to the same repository behaves the same way. |
+| **Levels** | Core, and the optional levels Entities, Search, Sync, Undo and Remote. |
 
 How a client finds the Events a conversation is about, how it ranks them and when it tidies up are left to the client. The full rules are in **[PROTOCOL.md](PROTOCOL.md)**.
 
-## What is in this repository
+## Repository contents
 
-| | |
+| Path | |
 |---|---|
 | [PROTOCOL.md](PROTOCOL.md) | The specification. Normative. |
-| [conformance/](conformance/README.md) | Tests that check any server over MCP, whatever its language. |
-| [server/](server/README.md) | A reference server, for trying the protocol on one computer and checking other implementations against. |
+| [conformance/](conformance/README.md) | Conformance tests that check any server over MCP. |
+| [server/](server/README.md) | The reference server: Core, Entities, Search, Sync and Undo, on one computer. |
 | [docs/agent-guide.md](docs/agent-guide.md) | How an assistant can use a repository well: answer first, record after, organise later. Not normative. |
 
-Nothing here runs as a service. A server runs where its owner puts it: on their own computer, on a machine they control, or in a cloud they choose.
+## Implementing the protocol
 
-## Implementing a server
-
-1. Read [PROTOCOL.md](PROTOCOL.md). Start with the Core level; Entities, Search, Sync, Undo and Remote are optional levels (§12).
-2. Offer the operations as MCP tools (§9.1): over stdio for one computer, or over streamable HTTP with a credential for each client when several computers share a repository (§9.2).
-3. Run the conformance tests against it, with no need to clone anything:
+1. Read [PROTOCOL.md](PROTOCOL.md) and start with the Core level (§12).
+2. Offer the operations as MCP tools (§9.1): over stdio on one computer, or over streamable HTTP, with a credential for each client, when several computers share a repository (§9.2).
+3. Test your server, whatever its language, with no need to clone anything:
 
    ```sh
    npx -y -p protocol-chaos@0.2 protocol-chaos-conformance --stdio "node my-server.js --data {tmp}"
    ```
 
-   `{tmp}` becomes a fresh, empty directory for each server the suite starts. The tests write data, so they refuse to run against a repository that is not empty. From a clone, `node conformance/run.mjs` takes the same options.
+   `{tmp}` becomes a fresh, empty directory for each server the suite starts. The tests write data, so they refuse to run against a repository that is not empty.
 
-The specification is meant to be enough on its own. As a check, an agent that had never seen any implementation wrote a server from this document alone. Its first attempt passed 39 of the 40 Core tests of the time, and the one gap it found has been fixed in the document. That server is the reference server here; `npm test` runs every test against it.
+The specification is meant to be enough on its own. To check that, an agent that had never seen any implementation wrote a server from the document alone. Its first run passed 39 of the 40 Core tests of the time, and the one gap it found was fixed in the document. That server became the reference server here.
 
 ## Your data
 
-- The repository belongs to its user. Every conforming server lets the owner export everything and import it into another server (§8.6), so the user can always leave with their matters.
-- The reference server keeps the repository in one file on your computer and sends it nowhere.
-- Today every connected assistant can read every Event and Entity; per-client visibility is an open issue (§13). Connect only assistants you would trust with the whole repository. What an assistant reads enters its model context and is processed by its provider.
+- The repository belongs to its user, and can always be exported and moved to another server (§8.6).
+- The reference server keeps it in one file on your computer and sends it nowhere.
+- Every connected assistant can currently read the whole repository; per-client visibility is not designed yet (§13). Connect only assistants you would trust with all of it. What an assistant reads enters its model context and is processed by its provider.
 - Assistants are told never to record passwords, tokens or identity-document numbers (§7).
 
-## Status
+## Status and roadmap
 
-Draft 0.2 grew out of daily use: the author uses an implementation of draft 0.1 every day, with several assistants on different computers sharing one repository. Draft 0.2 keeps what that use showed to matter and drops what was never used. That implementation, the `protocol-chaos` package on npm, is not part of this repository and is moving to this draft.
+Protocol Chaos is a draft, and drafts carry no compatibility promise. Draft 0.2 grew out of daily use: its author has used an implementation of draft 0.1 every day, with several assistants on different computers sharing one repository, and draft 0.2 keeps what that use showed to matter. That implementation is not part of this repository, and is moving to draft 0.2.
 
-Open issues include per-client visibility, recognising the same person across applications, deletion, and Events shared by several people ([§13](PROTOCOL.md#13-open-issues)).
+Next:
+
+- The Remote binding (§9.2) in the reference server, so that several computers and cloud assistants can share one repository.
+- Per-client visibility: what each assistant may read (§13).
+- Recognising the same person across applications (§13).
+- Draft 0.3, from the cases people report.
+
+The [changelog](CHANGELOG.md) lists every release.
+
+## FAQ
+
+**Is this a memory product?** No, it is a protocol: an agreement on how a person's matters are kept, so that any assistant can use them. An assistant's own memory stays with that assistant; Protocol Chaos keeps the matters for the person, across assistants.
+
+**Do I need a server?** Yes, any conforming one. The reference server runs on your computer with one command. You can also write your own, and the conformance tests tell you when it is right.
+
+**Which assistants work with it?** Any MCP client that can start a local server. The quick start covers Claude Code, Codex, Claude Desktop, Cursor and Kiro. Cloud assistants need a server that implements the Remote level.
+
+**Where is my data?** Where your server runs, and nowhere else. See [Your data](#your-data).
 
 ## Contributing
 
-Questions, cases from real use and implementations are welcome as issues. A change to the specification is proposed as a change to PROTOCOL.md, together with the conformance test that checks it.
+What the protocol needs most is evidence from real use: cases where it fits, cases where it falls short, and implementations.
 
-Part of the Chaos family, alongside **Doctor Chaos**.
+- **Questions and ideas:** [Discussions](https://github.com/chaos-xxl/protocol-chaos/discussions)
+- **Changes to the specification:** a [proposal](https://github.com/chaos-xxl/protocol-chaos/issues/new?template=spec_proposal.yml) that starts from a real case
+- **Bugs:** [issues](https://github.com/chaos-xxl/protocol-chaos/issues)
+- **Security problems:** privately, as [SECURITY.md](SECURITY.md) describes
 
-## License
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how changes are decided.
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+## About
+
+Protocol Chaos was created by Xue Xinglong ([@chaos-xxl](https://github.com/chaos-xxl)), and is part of the Chaos family, alongside Doctor Chaos. It is licensed under the [Apache License 2.0](LICENSE).

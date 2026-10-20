@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/chaos-xxl/protocol-chaos/discussions
+    about: Ask a question, share an idea or an implementation.
+  - name: Report a security problem privately
+    url: https://github.com/chaos-xxl/protocol-chaos/security/advisories/new
+    about: Never in a public issue.

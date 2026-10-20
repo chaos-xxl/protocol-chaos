@@ -1,0 +1,36 @@
+name: Bug report
+description: Something wrong in the reference server, the conformance tests or the documents.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please never paste the contents of your own repository: reduce the problem to made-up Events. Security problems are reported privately, as [SECURITY.md](https://github.com/chaos-xxl/protocol-chaos/blob/main/SECURITY.md) describes.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Where
+      options:
+        - Reference server
+        - Conformance tests
+        - Specification text (wording, a contradiction, a broken link)
+        - Agent guide or README
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: For the reference server or the tests, the tool call and the result. Quote the section of PROTOCOL.md you expected it to follow.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Commands, or the sequence of tool calls, with made-up data.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: "The protocol-chaos version, Node.js version and operating system, for example: protocol-chaos 0.2.0, Node.js 22.11, macOS 15"

@@ -1,0 +1,38 @@
+name: Specification proposal
+description: A real case the protocol handles badly, and what should change in PROTOCOL.md.
+title: "[spec] "
+labels: ["specification"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Changes to the specification start from a case. Please use made-up Events: never paste the contents of your own repository. See [CONTRIBUTING.md](https://github.com/chaos-xxl/protocol-chaos/blob/main/CONTRIBUTING.md) for how proposals are judged.
+  - type: textarea
+    id: case
+    attributes:
+      label: The case
+      description: What the user said, what the assistants did, and where the protocol fell short.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposed change
+      description: The smallest change to PROTOCOL.md that would handle the case. Name the sections it touches.
+    validations:
+      required: true
+  - type: dropdown
+    id: interoperability
+    attributes:
+      label: Would two implementations fail to work together without it?
+      options:
+        - "Yes: implementations would disagree or break"
+        - "No: it improves the experience, but implementations could each decide"
+        - "Not sure"
+    validations:
+      required: true
+  - type: textarea
+    id: test
+    attributes:
+      label: How a conformance test could check it
+      description: Optional. Every requirement on servers needs a test.
