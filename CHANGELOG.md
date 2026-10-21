@@ -2,7 +2,7 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
-## protocol-chaos 0.2.2 (2026-10-20)
+## protocol-chaos 0.2.2 (2026-10-21)
 
 - The npm page shows the English README. npm packs every `README*` file at the root of a package and showed the Chinese one, which has moved to [docs/README.zh-CN.md](docs/README.zh-CN.md).
 
