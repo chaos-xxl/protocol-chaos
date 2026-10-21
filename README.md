@@ -1,4 +1,7 @@
-# Protocol Chaos
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-dark.svg">
+  <img alt="Protocol Chaos. Tools change. Your matters stay. Things a person said to Claude, Codex, Cursor, Kiro and their own app are threaded into a tidy tree of the matters they keep. A passing question stays unthreaded, and one assistant's guess is marked as an inference." src="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-light.svg">
+</picture>
 
 [![npm](https://img.shields.io/npm/v/protocol-chaos?label=npm)](https://www.npmjs.com/package/protocol-chaos)
 [![Specification](https://img.shields.io/badge/specification-draft%200.2-informational)](PROTOCOL.md)
