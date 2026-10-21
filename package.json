@@ -1,6 +1,6 @@
 {
   "name": "protocol-chaos",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Protocol Chaos: an open protocol for the matters a person holds, shared by every AI assistant they use. Reference MCP server, specification and conformance tests.",
   "keywords": [
     "mcp",
@@ -34,7 +34,6 @@
     "conformance/",
     "docs/agent-guide.md",
     "PROTOCOL.md",
-    "README.zh-CN.md",
     "NOTICE"
   ],
   "scripts": {
