@@ -1,11 +1,11 @@
 # 混沌协议 · Protocol Chaos
 
 [![npm](https://img.shields.io/npm/v/protocol-chaos?label=npm)](https://www.npmjs.com/package/protocol-chaos)
-[![Specification](https://img.shields.io/badge/specification-draft%200.2-informational)](PROTOCOL.md)
+[![Specification](https://img.shields.io/badge/specification-draft%200.2-informational)](../PROTOCOL.md)
 [![Tests](https://github.com/chaos-xxl/protocol-chaos/actions/workflows/test.yml/badge.svg)](https://github.com/chaos-xxl/protocol-chaos/actions/workflows/test.yml)
-[![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue)](../LICENSE)
 
-[English](README.md) · 简体中文
+[English](../README.md) · 简体中文
 
 **一份开放协议：一个人生活里的那些事，由他自己掌握，他用的每个 AI 助手都能共用。**
 
@@ -53,7 +53,7 @@ flowchart LR
 
 然后跟一个助手说一件你在打算的事，比如「我想学街头摄影，不过只能周末去」。再问另一个助手，或者开一个新对话，问它我说过摄影什么。这件事存在 `~/.protocol-chaos/repository.json` 里，一个普通的文件，归你所有。
 
-想效果好，请给每个助手装上[常驻指引](docs/agent-guide.md#server-instructions)：MCP 只告诉助手有哪些工具，不告诉它什么时候用。`protocol-chaos@0.2` 跟着这一版草案和它的修复走，以后的草案会是 `0.3`。
+想效果好，请给每个助手装上[常驻指引](agent-guide.md#server-instructions)：MCP 只告诉助手有哪些工具，不告诉它什么时候用。`protocol-chaos@0.2` 跟着这一版草案和它的修复走，以后的草案会是 `0.3`。
 
 ## 为什么是混沌协议
 
@@ -75,20 +75,20 @@ flowchart LR
 | **写入规则** | 什么该记、什么不该记，让往同一个库里写的每个助手做法一致。 |
 | **级别** | Core，以及可选的实体、搜索、同步、撤销、远程。 |
 
-客户端怎么判断一段对话涉及哪些事、怎么排序、什么时候整理，由客户端自己决定。完整规则见 **[PROTOCOL.md](PROTOCOL.md)**（英文）。
+客户端怎么判断一段对话涉及哪些事、怎么排序、什么时候整理，由客户端自己决定。完整规则见 **[PROTOCOL.md](../PROTOCOL.md)**（英文）。
 
 ## 仓库里有什么
 
 | 路径 | |
 |---|---|
-| [PROTOCOL.md](PROTOCOL.md) | 规范，有约束力。 |
-| [conformance/](conformance/README.md) | 兼容性测试，通过 MCP 检查任何服务端。 |
-| [server/](server/README.md) | 参考服务端：Core、实体、搜索、同步、撤销，在一台电脑上运行。 |
-| [docs/agent-guide.md](docs/agent-guide.md) | 助手怎么用好一个库：先回答，后记录，晚点整理。不是规范。 |
+| [PROTOCOL.md](../PROTOCOL.md) | 规范，有约束力。 |
+| [conformance/](../conformance/README.md) | 兼容性测试，通过 MCP 检查任何服务端。 |
+| [server/](../server/README.md) | 参考服务端：Core、实体、搜索、同步、撤销，在一台电脑上运行。 |
+| [docs/agent-guide.md](agent-guide.md) | 助手怎么用好一个库：先回答，后记录，晚点整理。不是规范。 |
 
 ## 实现这份协议
 
-1. 读 [PROTOCOL.md](PROTOCOL.md)，先做 Core 级别（§12）。
+1. 读 [PROTOCOL.md](../PROTOCOL.md)，先做 Core 级别（§12）。
 2. 把各项操作做成 MCP 工具（§9.1）：一台电脑用 stdio；几台电脑共用一个库时，用 streamable HTTP，每个客户端一个凭证（§9.2）。
 3. 测你的服务端，不管它用什么语言写，也不用克隆仓库：
 
@@ -118,7 +118,7 @@ flowchart LR
 - 跨应用认出同一个人（§13）。
 - draft 0.3，从大家反馈的案例出发。
 
-每个版本的变化见[更新记录](CHANGELOG.md)。
+每个版本的变化见[更新记录](../CHANGELOG.md)。
 
 ## 常见问题
 
@@ -137,10 +137,10 @@ flowchart LR
 - **问题和想法：** [Discussions](https://github.com/chaos-xxl/protocol-chaos/discussions)
 - **修改规范：** 从一个真实案例出发，提一个[提案](https://github.com/chaos-xxl/protocol-chaos/issues/new?template=spec_proposal.yml)
 - **bug：** [issues](https://github.com/chaos-xxl/protocol-chaos/issues)
-- **安全问题：** 私下报告，见 [SECURITY.md](SECURITY.md)
+- **安全问题：** 私下报告，见 [SECURITY.md](../SECURITY.md)
 
-改动怎么决定，见 [CONTRIBUTING.md](CONTRIBUTING.md)（英文）。
+改动怎么决定，见 [CONTRIBUTING.md](../CONTRIBUTING.md)（英文）。
 
 ## 关于
 
-混沌协议由薛星龙（[@chaos-xxl](https://github.com/chaos-xxl)）创建，是混沌系列的一员，另一个是 Doctor Chaos。采用 [Apache License 2.0](LICENSE) 许可。
+混沌协议由薛星龙（[@chaos-xxl](https://github.com/chaos-xxl)）创建，是混沌系列的一员，另一个是 Doctor Chaos。采用 [Apache License 2.0](../LICENSE) 许可。

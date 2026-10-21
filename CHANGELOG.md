@@ -4,7 +4,7 @@ The specification and the `protocol-chaos` package, which holds the reference se
 
 ## protocol-chaos 0.2.2 (2026-10-20)
 
-- The npm page shows the English README. The Chinese one stays in the repository, linked from it.
+- The npm page shows the English README. npm packs every `README*` file at the root of a package and showed the Chinese one, which has moved to [docs/README.zh-CN.md](docs/README.zh-CN.md).
 
 ## protocol-chaos 0.2.1 (2026-10-20)
 

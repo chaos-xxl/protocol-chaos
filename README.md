@@ -5,7 +5,7 @@
 [![Tests](https://github.com/chaos-xxl/protocol-chaos/actions/workflows/test.yml/badge.svg)](https://github.com/chaos-xxl/protocol-chaos/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 
-English · [简体中文](README.zh-CN.md)
+English · [简体中文](docs/README.zh-CN.md)
 
 **An open protocol for the matters in a person's life, held by the person and shared by every AI assistant they use.**
 
