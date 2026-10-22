@@ -2,7 +2,7 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
-## protocol-chaos 0.2.3 (unreleased)
+## protocol-chaos 0.2.3 (2026-10-22)
 
 - **The reference server implements the Remote level (§9.2).** `--http [host:]port` serves MCP streamable HTTP at `/mcp`. Each assistant gets its own token (`protocol-chaos clients add <name>`), kept only as a hash and revoked at once by `clients remove`. Over HTTP a client writes only as itself (`ACTOR_MISMATCH` otherwise), the writes that change fields or parents need `expectedVersion` (`VERSION_REQUIRED`), and requests from a browser page are refused. Plain HTTP is served only on a loopback address; elsewhere the server needs `--tls-cert` and `--tls-key`, or a TLS reverse proxy in front. See [server/README.md](server/README.md#remote).
 - Every conformance test that can run over `--url` passes over HTTP; the tests now run that way too.
