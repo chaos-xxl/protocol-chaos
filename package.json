@@ -38,9 +38,10 @@
   ],
   "scripts": {
     "start": "node server/index.mjs",
-    "test": "npm run test:server && npm run test:conformance",
+    "test": "npm run test:server && npm run test:conformance && npm run test:hermes",
     "test:server": "node --test server/test/store.test.mjs server/test/remote.test.mjs",
     "test:conformance": "node conformance/run.mjs --stdio \"node server/index.mjs --owner-tools --data {tmp}\"",
+    "test:hermes": "python3 -m unittest discover -s integrations/hermes/tests",
     "conformance": "node conformance/run.mjs",
     "prepublishOnly": "npm test"
   },

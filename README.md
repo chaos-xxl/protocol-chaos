@@ -90,6 +90,7 @@ How a client finds the Events a conversation is about, how it ranks them and whe
 | [conformance/](conformance/README.md) | Conformance tests that check any server over MCP. |
 | [server/](server/README.md) | The reference server, at every level from Core to Remote: over stdio on one computer, or over HTTP for several. |
 | [docs/agent-guide.md](docs/agent-guide.md) | How an assistant can use a repository well: answer first, record after, organise later. Not normative. |
+| [integrations/hermes/](integrations/hermes/protocol-chaos/README.md) | A plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent): the user's matters are in the conversation before the model answers, and their words are recorded after it. Hermes decides on its own side what to read. |
 
 ## Implementing the protocol
 
@@ -118,7 +119,7 @@ Protocol Chaos is a draft, and drafts carry no compatibility promise. Draft 0.2 
 
 Next:
 
-- A plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that reads before the model answers and records after.
+- The [Hermes plugin](integrations/hermes/protocol-chaos/README.md) in Hermes's plugin catalog, once it has been in daily use for a while.
 - Per-client visibility: what each assistant may read (§13).
 - Recognising the same person across applications (§13).
 - Draft 0.3, from the cases people report.

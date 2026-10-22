@@ -37,7 +37,7 @@ cd "$WORKDIR/repo"
 printf 'tracked files: %s, commits: %s\n' "$(git ls-files | wc -l | tr -d ' ')" "$(git rev-list --all | wc -l | tr -d ' ')"
 
 step "Files a newcomer needs are present"
-for f in LICENSE NOTICE README.md docs/README.zh-CN.md PROTOCOL.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/agent-guide.md conformance/README.md conformance/run.mjs server/README.md server/index.mjs package.json package-lock.json; do
+for f in LICENSE NOTICE README.md docs/README.zh-CN.md PROTOCOL.md CHANGELOG.md CONTRIBUTING.md SECURITY.md CODE_OF_CONDUCT.md docs/agent-guide.md conformance/README.md conformance/run.mjs server/README.md server/index.mjs package.json package-lock.json integrations/hermes/protocol-chaos/README.md integrations/hermes/protocol-chaos/plugin.yaml integrations/hermes/protocol-chaos/__init__.py; do
   test -f "$f" || fail "missing $f"
   printf '  ok  %s\n' "$f"
 done
@@ -108,5 +108,12 @@ grep -E '^ℹ (pass|fail)' "$WORKDIR/store.log" | sed 's/^/  /'
 server="${PROTOCOL_CHAOS_TEST_SERVER:-node server/index.mjs --owner-tools --data {tmp}}"
 step "Conformance against: $server"
 node conformance/run.mjs --stdio "$server" | tail -6 || fail "conformance tests failed"
+
+step "Hermes plugin against the reference server"
+if git ls-files integrations | grep -qE '(\.pyc|\.pyo|__pycache__)'; then
+  fail "Python bytecode is tracked under integrations/"
+fi
+python3 -m unittest discover -s integrations/hermes/tests >"$WORKDIR/hermes.log" 2>&1 || { tail -30 "$WORKDIR/hermes.log"; fail "Hermes plugin tests failed"; }
+grep -E '^(Ran|OK)' "$WORKDIR/hermes.log" | sed 's/^/  /'
 
 printf '\nAll checks passed for %s.\n' "$REMOTE"

@@ -87,6 +87,7 @@ flowchart LR
 | [conformance/](../conformance/README.md) | 兼容性测试，通过 MCP 检查任何服务端。 |
 | [server/](../server/README.md) | 参考服务端，从 Core 到远程全部级别都支持：一台电脑上用 stdio，几台电脑共用时用 HTTP。 |
 | [docs/agent-guide.md](agent-guide.md) | 助手怎么用好一个库：先回答，后记录，晚点整理。不是规范。 |
+| [integrations/hermes/](../integrations/hermes/protocol-chaos/README.md) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) 的插件：模型回答前，用户的事情已经在对话里；回答后，再把用户的话记下来。读什么由 Hermes 在本机决定。 |
 
 ## 实现这份协议
 
@@ -115,7 +116,7 @@ flowchart LR
 
 接下来：
 
-- 给 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 做一个插件：模型回答前先读，回答后再记。
+- [Hermes 插件](../integrations/hermes/protocol-chaos/README.md)在日常用过一段时间后，提交到 Hermes 的插件目录。
 - 按客户端分别授权：每个助手能读到什么（§13）。
 - 跨应用认出同一个人（§13）。
 - draft 0.3，从大家反馈的案例出发。

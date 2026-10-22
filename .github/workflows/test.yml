@@ -23,5 +23,25 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci --ignore-scripts
-      # The reference server's storage tests, then every conformance test against it.
+      # The reference server's storage tests, every conformance test against it, and the
+      # Hermes plugin against it over HTTP.
       - run: npm test
+  hermes:
+    name: Hermes plugin, Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest and newest Python that Hermes runs on.
+        python: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: npm ci --ignore-scripts
+      - run: npm run test:hermes

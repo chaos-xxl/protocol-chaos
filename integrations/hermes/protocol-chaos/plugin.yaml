@@ -1,0 +1,35 @@
+name: protocol-chaos
+version: 0.2.0
+description: "Protocol Chaos for Hermes: the user's long-lived matters, kept on their own server, are in the conversation before the model answers, and the user's words are recorded there after it answers. Hermes decides on this machine what to read; the server never sees the messages."
+author: chaos-xxl
+license: Apache-2.0
+homepage: https://github.com/chaos-xxl/protocol-chaos
+requires_hermes: ">=0.21.1"
+provides_hooks:
+  - pre_llm_call
+  - post_llm_call
+requires_env:
+  - name: PROTOCOL_CHAOS_URL
+    description: "Your Protocol Chaos server's MCP endpoint, such as https://example.org:8443/mcp (draft 0.2 or later)"
+    url: "https://github.com/chaos-xxl/protocol-chaos/blob/main/server/README.md#remote"
+  - name: PROTOCOL_CHAOS_TOKEN
+    description: "The bearer token your server issued for this Hermes: protocol-chaos clients add hermes"
+    secret: true
+config_schema:
+  actor:
+    type: str
+    default: hermes
+    label: "Client name"
+    description: "The client name the token was issued for; the plugin writes as {kind: agent, id: <this>}."
+  capture:
+    type: str
+    choices: [auto, model, "off"]
+    default: auto
+    label: "Recording"
+    description: "auto: decide in the background with the recording model after each answer; model: ask the model to record with event_note; off: record nothing."
+  overview:
+    type: str
+    choices: [auto, prompt, turn, "off"]
+    default: auto
+    label: "Overview"
+    description: "Where the overview of the user's matters goes: the system prompt (auto, prompt), the first turn's message (turn), or nowhere (off)."
