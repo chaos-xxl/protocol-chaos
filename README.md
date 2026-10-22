@@ -56,6 +56,8 @@ You need Node.js 20 or later and an assistant that can use MCP servers. Add the 
 
 Then tell one assistant about something you are planning, for example "I'd like to get into street photography, but only at weekends". Ask another assistant, or a new conversation, what you said about photography. The matter is stored in `~/.protocol-chaos/repository.json`, a plain file that belongs to you.
 
+For assistants on several computers, or a cloud assistant, run the same server over HTTP and give each assistant its own token: see [Remote](server/README.md#remote).
+
 For the best results, give each assistant the [standing instructions](docs/agent-guide.md#server-instructions): MCP tells an assistant which tools exist, not when to use them. `protocol-chaos@0.2` follows this draft and its fixes; a later draft will be `0.3`.
 
 ## Why Protocol Chaos?
@@ -86,7 +88,7 @@ How a client finds the Events a conversation is about, how it ranks them and whe
 |---|---|
 | [PROTOCOL.md](PROTOCOL.md) | The specification. Normative. |
 | [conformance/](conformance/README.md) | Conformance tests that check any server over MCP. |
-| [server/](server/README.md) | The reference server: Core, Entities, Search, Sync and Undo, on one computer. |
+| [server/](server/README.md) | The reference server, at every level from Core to Remote: over stdio on one computer, or over HTTP for several. |
 | [docs/agent-guide.md](docs/agent-guide.md) | How an assistant can use a repository well: answer first, record after, organise later. Not normative. |
 
 ## Implementing the protocol
@@ -106,7 +108,7 @@ The specification is meant to be enough on its own. To check that, an agent that
 ## Your data
 
 - The repository belongs to its user, and can always be exported and moved to another server (§8.6).
-- The reference server keeps it in one file on your computer and sends it nowhere.
+- The reference server keeps it in one file on the computer it runs on and sends it nowhere. Over HTTP it answers only assistants that hold a token you issued.
 - Every connected assistant can currently read the whole repository; per-client visibility is not designed yet (§13). Connect only assistants you would trust with all of it. What an assistant reads enters its model context and is processed by its provider.
 - Assistants are told never to record passwords, tokens or identity-document numbers (§7).
 
@@ -116,7 +118,7 @@ Protocol Chaos is a draft, and drafts carry no compatibility promise. Draft 0.2 
 
 Next:
 
-- The Remote binding (§9.2) in the reference server, so that several computers and cloud assistants can share one repository.
+- A plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent) that reads before the model answers and records after.
 - Per-client visibility: what each assistant may read (§13).
 - Recognising the same person across applications (§13).
 - Draft 0.3, from the cases people report.
@@ -129,7 +131,7 @@ The [changelog](CHANGELOG.md) lists every release.
 
 **Do I need a server?** Yes, any conforming one. The reference server runs on your computer with one command. You can also write your own, and the conformance tests tell you when it is right.
 
-**Which assistants work with it?** Any MCP client that can start a local server. The quick start covers Claude Code, Codex, Claude Desktop, Cursor and Kiro. Cloud assistants need a server that implements the Remote level.
+**Which assistants work with it?** Any MCP client. The quick start covers Claude Code, Codex, Claude Desktop, Cursor and Kiro on one computer. Over HTTP, the Remote level, assistants on other computers and cloud assistants that can reach your server share the same repository.
 
 **Where is my data?** Where your server runs, and nowhere else. See [Your data](#your-data).
 

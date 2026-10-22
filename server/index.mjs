@@ -1,36 +1,85 @@
 #!/usr/bin/env node
-// The Protocol Chaos reference server: draft 0.2, levels Core, Entities, Search, Sync and
-// Undo, over MCP stdio (§9.1), keeping the repository in one JSON file (store.mjs).
+// The Protocol Chaos reference server: draft 0.2, levels Core, Entities, Search, Sync, Undo
+// and Remote, keeping the repository in one JSON file (store.mjs).
 //
-//   node server/index.mjs [--data <directory>] [--owner-tools]
+//   protocol-chaos [--data <directory>] [--owner-tools]                MCP over stdio (§9.1)
+//   protocol-chaos --http [<host>:]<port> [--tls-cert <file> --tls-key <file>]
+//                  [--data <directory>] [--owner-tools]                MCP over HTTP (§9.2)
+//   protocol-chaos clients add <name> | list | remove <name> [--data <directory>]
 //
 // --data         where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
 // --owner-tools  also offer repository_export and repository_import. An export holds
 //                everything, so they are off unless the owner asks (§8.6, §10); the
 //                conformance tests use them. Without them, the file itself is the export.
+// --http         serve MCP streamable HTTP at /mcp instead of stdio. Each client needs a
+//                token from `clients add`, and writes only as {"kind": "agent", "id": <its name>}.
+//                Plain HTTP only on a loopback address; otherwise give --tls-cert and --tls-key.
 //
-// Nothing but MCP messages is written to stdout, and nothing is logged.
+// Over stdio nothing but MCP messages is written to stdout. Nothing that is said is logged.
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { Clients } from './clients.mjs';
+import { isLoopback, parseListen, PATH, serveHttp } from './http.mjs';
 import { Store } from './store.mjs';
 import { ACCOUNT_SOURCES, ACTOR_KINDS, ProtocolError, STATES } from './validate.mjs';
 
 const args = process.argv.slice(2);
+const VALUED = ['--data', '--http', '--tls-cert', '--tls-key'];
 const option = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
 };
-const dataOption = option('--data');
-if (args.includes('--data') && !dataOption) {
-  process.stderr.write('--data needs a directory\n');
+const usage = (message) => {
+  process.stderr.write(`${message}\n`);
   process.exit(2);
+};
+for (const name of VALUED) {
+  if (args.includes(name) && (!option(name) || option(name).startsWith('--'))) usage(`${name} needs a value`);
 }
-const directory = resolve(dataOption ?? process.env.PROTOCOL_CHAOS_DATA ?? join(homedir(), '.protocol-chaos'));
+const positional = [];
+for (let index = 0; index < args.length; index += 1) {
+  if (VALUED.includes(args[index])) index += 1;
+  else if (!args[index].startsWith('--')) positional.push(args[index]);
+}
+const directory = resolve(option('--data') ?? process.env.PROTOCOL_CHAOS_DATA ?? join(homedir(), '.protocol-chaos'));
 const ownerTools = args.includes('--owner-tools');
+
+if (positional[0] === 'clients') clientsCommand(positional.slice(1));
+if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: clients add <name> | list | remove <name>.`);
+
+/** `protocol-chaos clients …`: manages the tokens of the Remote level, then exits. */
+function clientsCommand([action, name, ...rest]) {
+  const clients = new Clients(directory);
+  const say = (text) => process.stdout.write(`${text}\n`);
+  try {
+    if (action === 'add' && name && !rest.length) {
+      const token = clients.add(name);
+      say(`Created the client "${name}". Its token, shown only this once:\n\n  ${token}\n`);
+      say(`Give it to that assistant as a bearer token (Authorization: Bearer <token>). It writes as {"kind": "agent", "id": "${name}"}.`);
+      say(`To revoke it: protocol-chaos clients remove ${name}`);
+    } else if (action === 'list' && !name) {
+      const list = clients.list();
+      say(list.length ? list.map((client) => `${client.name}  (created ${client.createdAt})`).join('\n') : 'No clients.');
+    } else if (action === 'remove' && name && !rest.length) {
+      if (!clients.remove(name)) {
+        process.stderr.write(`There is no client named "${name}".\n`);
+        process.exit(1);
+      }
+      say(`Removed the client "${name}". Its token no longer works.`);
+    } else {
+      usage('Usage: protocol-chaos clients add <name> | list | remove <name> [--data <directory>]');
+    }
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 const store = new Store(directory);
 
 const VERBATIM = "Verbatim rule: text is the user's actual words, trimmed and otherwise unchanged, never a summary or a third-person paraphrase such as \"The user confirmed…\"; when a message covers several Events, pass the part about this Event, still in the user's words. Interpretation belongs in the fields.";
@@ -38,13 +87,16 @@ const VERBATIM = "Verbatim rule: text is the user's actual words, trimmed and ot
 const VERBATIM_ENTITY = "Verbatim rule: the words (text, accountText) are the user's actual words, trimmed and otherwise unchanged, never a summary or a third-person paraphrase; pass the part about this Entity. Statements are your one-fact interpretation; mark an inference with basis.";
 
 // The template from docs/agent-guide.md, under 2,000 characters because some clients cut
-// longer instructions. The rules it leaves out are in the tool descriptions.
-const INSTRUCTIONS = [
+// longer instructions. The rules it leaves out are in the tool descriptions. Over HTTP the
+// client's name is known, so the instructions say which actor to write as.
+const instructions = (client) => [
   "This server holds the user's Events: the long-lived matters they tell their assistants about (trips, plans, purchases, ambitions), and the people and places involved. It outlives conversations, assistants and machines. It exists to organise what the user said, not to make Events complete.",
   'READ ON YOUR SIDE. Answer from what the conversation holds. When the answer depends on the user\'s own matters, use the directory (context_pack) to decide which Events matter, and read only those by id. Never send unrelated messages.',
   'RECORD AFTER. After answering, record only words that change an Event (its title, state, progress, goal, constraint, plan, refs or parents) or start one: an intention, plan, commitment, purchase, trip, target or arrangement that outlasts the conversation. One event_note with the user\'s words and the most specific Event\'s id; for a new Event, a title that names it on its own and parentEventId when it belongs under one. Never questions, hypotheticals, requests for work, fragments such as a meal or a workout, or your own calculations; but do record a feeling, news or progress said along with them.',
   "VERBATIM. Account text is the user's actual sentence, never a summary. Mark your inferences with their basis; the user's words win.",
-  'YOUR NAME. Write as yourself (actor), never as the user or another assistant.',
+  client
+    ? `YOUR NAME. This connection is the client "${client}": write as {"kind": "agent", "id": "${client}"}, never as the user or another assistant.`
+    : 'YOUR NAME. Write as yourself (actor), never as the user or another assistant.',
   "DON'T ASK TO TIDY. Do not ask the user to fill in details or approve the organisation; ask only before an irreversible or outward action.",
 ].join('\n\n');
 
@@ -373,35 +425,92 @@ const OWNER_TOOLS = new Set(['repository_export', 'repository_import']);
 const offered = TOOLS.filter((tool) => ownerTools || !OWNER_TOOLS.has(tool.name));
 const byName = new Map(offered.map((tool) => [tool.name, tool]));
 
-const { version } = createRequire(import.meta.url)('../package.json');
-const server = new Server(
-  { name: 'protocol-chaos-reference', version },
-  { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
-);
-
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: offered.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
-}));
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const tool = byName.get(request.params.name);
-  if (!tool) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${request.params.name}`);
-  const input = request.params.arguments ?? {};
-  let body;
-  let isError = false;
-  try {
-    body = tool.annotations.readOnlyHint
-      ? store.read((repo) => tool.run(repo, input))
-      : await store.write((repo) => tool.run(repo, input));
-  } catch (error) {
-    isError = true;
-    body = error instanceof ProtocolError
-      ? { code: error.code, message: error.message }
-      : { code: 'INTERNAL_ERROR', message: 'The server failed unexpectedly; nothing was changed. Retry, and report it if it persists.' };
+// §9.2: over a remote connection every write is bound to the authenticated client, and the
+// writes that change fields or parents must say which version they saw.
+const VERSIONED = new Set(['event_record_expression', 'event_add_parent', 'event_remove_parent', 'entity_record']);
+const wellFormed = (actor) => actor !== null && typeof actor === 'object' && ACTOR_KINDS.includes(actor.kind)
+  && typeof actor.id === 'string' && actor.id.trim() !== '';
+function checkRemote(tool, input, client) {
+  if (tool.annotations.readOnlyHint) return;
+  // A malformed actor is left to validation (VALIDATION_ERROR); a well-formed one must be the client.
+  if (wellFormed(input.actor) && (input.actor.kind !== 'agent' || input.actor.id !== client)) {
+    throw new ProtocolError('ACTOR_MISMATCH', `This connection is authenticated as the client "${client}": write as {"kind": "agent", "id": "${client}"}. Nothing was changed.`);
   }
-  const result = { content: [{ type: 'text', text: JSON.stringify(body) }] };
-  if (isError) result.isError = true;
-  return result;
-});
+  if (VERSIONED.has(tool.name) && (input.expectedVersion === undefined || input.expectedVersion === null)) {
+    throw new ProtocolError('VERSION_REQUIRED', `Over a remote connection, ${tool.name} needs expectedVersion: the version from your last read or receipt. Nothing was changed.`);
+  }
+}
 
-await server.connect(new StdioServerTransport());
+const { version } = createRequire(import.meta.url)('../package.json');
+
+/** One MCP server: for stdio, the only one; over HTTP, one per request, bound to its client. */
+function createServer({ client } = {}) {
+  const server = new Server(
+    { name: 'protocol-chaos-reference', version },
+    { capabilities: { tools: {} }, instructions: instructions(client) },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: offered.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const tool = byName.get(request.params.name);
+    if (!tool) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${request.params.name}`);
+    const input = request.params.arguments ?? {};
+    let body;
+    let isError = false;
+    try {
+      if (client) checkRemote(tool, input, client);
+      body = tool.annotations.readOnlyHint
+        ? store.read((repo) => tool.run(repo, input))
+        : await store.write((repo) => tool.run(repo, input));
+    } catch (error) {
+      isError = true;
+      body = error instanceof ProtocolError
+        ? { code: error.code, message: error.message }
+        : { code: 'INTERNAL_ERROR', message: 'The server failed unexpectedly; nothing was changed. Retry, and report it if it persists.' };
+    }
+    const result = { content: [{ type: 'text', text: JSON.stringify(body) }] };
+    if (isError) result.isError = true;
+    return result;
+  });
+
+  return server;
+}
+
+if (option('--http')) {
+  const listen = parseListen(option('--http'));
+  if (!listen) usage('--http takes a port, or host:port, such as 127.0.0.1:8721');
+  const cert = option('--tls-cert');
+  const key = option('--tls-key');
+  if (Boolean(cert) !== Boolean(key)) usage('--tls-cert and --tls-key go together');
+  if (!cert && !isLoopback(listen.host)) {
+    usage(`Refused: ${listen.host} can be reached from other machines, and a remote server must use TLS (§9.2). Give --tls-cert and --tls-key, or listen on 127.0.0.1 behind a TLS reverse proxy.`);
+  }
+  const clients = new Clients(directory);
+  let httpServer;
+  try {
+    httpServer = await serveHttp({
+      listen, tls: cert ? { cert, key } : undefined, clients, createServer,
+      // A full import is sent in one request, so the owner tools allow far larger bodies.
+      maxBody: ownerTools ? 64 * 1024 * 1024 : 1024 * 1024,
+    });
+  } catch (error) {
+    process.stderr.write(`Could not listen on ${option('--http')}: ${error.message}\n`);
+    process.exit(1);
+  }
+  const host = listen.host.includes(':') ? `[${listen.host}]` : listen.host;
+  const count = clients.list().length;
+  process.stderr.write(`Protocol Chaos reference server ${version} at ${cert ? 'https' : 'http'}://${host}:${httpServer.address().port}${PATH}, `
+    + `repository ${directory}, ${count} client${count === 1 ? '' : 's'}${ownerTools ? ', owner tools on: every client can export the whole repository' : ''}\n`);
+  if (!count) process.stderr.write('No clients yet, so every request is refused. Create one with: protocol-chaos clients add <name>\n');
+  const stop = () => {
+    httpServer.close(() => process.exit(0));
+    httpServer.closeAllConnections?.();
+  };
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+} else {
+  await createServer().connect(new StdioServerTransport());
+}

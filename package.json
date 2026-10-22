@@ -1,7 +1,7 @@
 {
   "name": "protocol-chaos",
-  "version": "0.2.2",
-  "description": "Protocol Chaos: an open protocol for the matters a person holds, shared by every AI assistant they use. Reference MCP server, specification and conformance tests.",
+  "version": "0.2.3",
+  "description": "Protocol Chaos: an open protocol for the matters a person holds, shared by every AI assistant they use. Reference MCP server (stdio and HTTP), specification and conformance tests.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -39,7 +39,7 @@
   "scripts": {
     "start": "node server/index.mjs",
     "test": "npm run test:server && npm run test:conformance",
-    "test:server": "node --test server/test/store.test.mjs",
+    "test:server": "node --test server/test/store.test.mjs server/test/remote.test.mjs",
     "test:conformance": "node conformance/run.mjs --stdio \"node server/index.mjs --owner-tools --data {tmp}\"",
     "conformance": "node conformance/run.mjs",
     "prepublishOnly": "npm test"

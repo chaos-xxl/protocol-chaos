@@ -100,8 +100,8 @@ set -e
 [ "$code" = "2" ] && printf '%s' "$usage" | grep -q -- '--stdio' || fail "run.mjs did not start: $usage"
 printf '  ok  run.mjs starts and asks for a server\n'
 
-step "Reference server: storage tests"
-node --test server/test/store.test.mjs >"$WORKDIR/store.log" 2>&1 || { tail -30 "$WORKDIR/store.log"; fail "storage tests failed"; }
+step "Reference server: storage and HTTP tests"
+node --test server/test/store.test.mjs server/test/remote.test.mjs >"$WORKDIR/store.log" 2>&1 || { tail -30 "$WORKDIR/store.log"; fail "storage or HTTP tests failed"; }
 grep -E '^ℹ (pass|fail)' "$WORKDIR/store.log" | sed 's/^/  /'
 
 # The reference server by default; PROTOCOL_CHAOS_TEST_SERVER names another one.
