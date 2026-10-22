@@ -88,9 +88,19 @@ configured for compression, a small and cheap one. Pin another under
 ## The organizer
 
 The organizer and the model's own reads and writes use the repository's tools, so add the same
-server as an MCP server named `protocol_chaos` too: its URL, with the header
-`Authorization: Bearer <token>`. Then create a scheduled job, for example from a chat with
-Hermes:
+server as an MCP server named `protocol_chaos` too. Hermes fills `${...}` in an MCP server's
+settings from your credentials when it connects, so the entry can reuse the plugin's two values
+and a new token is set in one place:
+
+```yaml
+mcp_servers:
+  protocol_chaos:
+    url: "${PROTOCOL_CHAOS_URL}"
+    headers:
+      Authorization: "Bearer ${PROTOCOL_CHAOS_TOKEN}"
+```
+
+Then create a scheduled job, for example from a chat with Hermes:
 
 ```text
 /cron add "every day at 4am" "Load the skill protocol-chaos:organizer with skill_view and follow it exactly."
