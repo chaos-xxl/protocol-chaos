@@ -14,7 +14,13 @@ themselves.
 - ``post_llm_call``: in a background thread, the user's own model (Hermes's ``ctx.llm``)
   decides whether the message changes one of their Events or starts one, and which; if so the
   plugin records the user's words with ``event_note``, copied from the message itself, so they
-  are always verbatim. Without ``ctx.llm`` the model is asked to record instead.
+  are always verbatim. Then it folds those words into that Event's fields (title, state,
+  progress, goal, constraint, plan, the people and things involved) with
+  ``event_record_expression``, grounded on the words just recorded, so the next turn and every
+  other assistant see the change. Without ``ctx.llm`` the model is asked to record instead.
+- A bundled skill, ``protocol-chaos:organizer``, does the rest of the organizing once a day
+  (the hierarchy, duplicates, people and places); the plugin offers it as an automation
+  blueprint, ``/blueprint protocol-chaos:organizer``.
 
 Everything fails open: on any error the turn goes on exactly as it would without the plugin.
 Logs carry ids and counts, never what the user said.
@@ -22,8 +28,8 @@ Logs carry ids and counts, never what the user said.
 Settings: ``PROTOCOL_CHAOS_URL`` (the server's MCP endpoint) and ``PROTOCOL_CHAOS_TOKEN`` (the
 bearer token the server issued for this Hermes), read through Hermes's secret scope; and,
 under ``plugins.entries.protocol-chaos.settings``, ``actor`` (the client name the token was
-issued for, default ``hermes``), ``capture`` (``auto``, ``model`` or ``off``) and ``overview``
-(``auto``, ``prompt``, ``turn`` or ``off``).
+issued for, default ``hermes``), ``capture`` (``auto``, ``model`` or ``off``), ``structure``
+(``auto`` or ``off``) and ``overview`` (``auto``, ``prompt``, ``turn`` or ``off``).
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("protocol_chaos")
 
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.1"
 URL_SECRET = "PROTOCOL_CHAOS_URL"
 TOKEN_SECRET = "PROTOCOL_CHAOS_TOKEN"
 READ_TIMEOUT = 6.0
@@ -63,8 +69,35 @@ RELATED_MAX = 3
 RELATED_MIN_SCORE = 1.0
 CANDIDATE_MIN_SCORE = 0.5
 CAPTURE_LIST_CHARS = 6000
+# The structure update: how many earlier words of the Event the model sees, and the longest fact
+# it may rewrite (a longer one is left as it is, rather than shown cut and rewritten from a part).
+STRUCTURE_WORDS = 6
+FACT_LIMIT = 4000
+MAX_NEW_REFS = 5
+LEGACY_KEY = "dev.protocol-chaos/legacy-0.1"
+FACT_KEYS = ("goal", "constraint", "plan")
+STATES = ("emerging", "active", "waiting", "dormant", "done", "cancelled")
+NOT_A_REF = frozenset({"me", "i", "myself", "user", "the user", "我", "我自己", "自己", "用户", "本人"})
 MAX_SESSIONS = 200
 CAPTURE_TASK = "protocol_chaos_capture"  # auxiliary task keys are letters, digits and underscores
+ORGANIZER_BLUEPRINT = {
+    "title": "Organize Protocol Chaos",
+    "description": "Once a day, fold what was recorded in your Protocol Chaos repository into structure: "
+                   "the hierarchy of matters, duplicates, people and places, and anything not structured yet. "
+                   "Needs the protocol_chaos MCP server (see the plugin's README).",
+    "category": "daily",
+    "schedule_template": "{minute} {hour} * * *",
+    "prompt_template": "Organize the user's Protocol Chaos repository: follow the protocol-chaos:organizer skill "
+                       "exactly, and report as it says.",
+    "slots": [
+        {"name": "time", "type": "time", "label": "What time?", "default": "04:00",
+         "help": "24h local time; a quiet hour is best"},
+        {"name": "deliver", "type": "enum", "label": "Where to report?", "default": "origin",
+         "options": ["origin", "local"], "strict": False},
+    ],
+    "skills": ["protocol-chaos:organizer"],
+    "tags": ["protocol-chaos", "organizer", "daily"],
+}
 SKILLS_DIR = Path(__file__).parent / "skills"
 HEADER = "[Protocol Chaos · added by the client, not written by the user]"
 OVERVIEW_MARKER = "Protocol Chaos · the user's matters"
@@ -591,6 +624,137 @@ CAPTURE_INSTRUCTIONS = (
     "character for character; usually the whole message. Answer in JSON."
 )
 
+STRUCTURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "change": {"type": "boolean"},
+        "title": {"type": ["string", "null"]},
+        "state": {"type": ["string", "null"]},
+        "progress": {"type": ["string", "null"]},
+        "goal": {"type": ["string", "null"]},
+        "constraint": {"type": ["string", "null"]},
+        "plan": {"type": ["string", "null"]},
+        "involves": {"type": ["array", "null"], "items": {"type": "string"}},
+    },
+    "required": ["change"],
+}
+
+STRUCTURE_INSTRUCTIONS = (
+    "You keep one of the user's long-lived matters up to date in their personal repository. You are given the "
+    "matter as it stands, its earlier words, and the new words just said about it. Decide what the new words "
+    "establish beyond what the matter already says, and answer with only those changes, leaving every other "
+    "field null; if they establish nothing new, answer change: false. "
+    "goal: what the matter is meant to achieve, including what would count as done. constraint: conditions it "
+    "must meet: limits, deadlines, budgets, wishes and preferences, even a wish about a place or a time. plan: "
+    "the arrangement as currently decided: when, where, how, which option. A wish moves from constraint into "
+    "plan once it is decided; never put the same thing in both. A value you give replaces the stored one, so "
+    "write its complete new content: everything that still holds plus the change, as natural language in the "
+    "language of the user's words, clear on its own, never an object or a list. "
+    "progress: where the matter stands now, in one short sentence, only when the words say how far it got. "
+    "state, only when the words make it clear: active (being pursued), waiting (on something or someone), "
+    "dormant (set aside), done (achieved), cancelled (given up). "
+    "involves: people, places or things the words name that the matter does not list yet, each a short "
+    "description in the user's terms such as 'my wife' or 'Lisbon'; never the user themself. "
+    "title: only when the matter has none: what it is, and when or which where that tells it apart. "
+    "Write relative times as concrete dates, counted from the day the new words were said. Never write 'the "
+    "user'; write the facts themselves. Words marked as an assistant's note are an inference: fold them only as "
+    "an inference with its basis, and never over the user's own words. Older details are things the user said "
+    "before: when you write the aspect they belong to, fold in what still holds. Answer in JSON."
+)
+
+
+def fold_input(result: dict, account: dict) -> tuple:
+    """The text the structure update shows the model, and the facts too long to rewrite."""
+    event = result.get("event") or {}
+    names = {e.get("id"): e.get("name") for e in result.get("entities") or [] if isinstance(e, dict)}
+    facts = event.get("facts") or {}
+    clipped = {key for key in FACT_KEYS if len(str(facts.get(key) or "")) > FACT_LIMIT}
+    lines = [f"The new words were said on {str(account.get('createdAt') or '')[:10]} (UTC).", "", "The matter now:",
+             f"title: {event.get('title') or '(none)'}", f"state: {event.get('state')}"]
+    progress = event.get("progress")
+    if isinstance(progress, dict) and progress.get("text"):
+        lines.append(f"progress: {progress['text']} ({str(progress.get('timestamp') or '')[:10]})")
+    else:
+        lines.append("progress: (none)")
+    for key in FACT_KEYS:
+        if key in clipped:
+            lines.append(f"{key}: (too long to show here; leave it null)")
+        else:
+            lines.append(f"{key}: {facts.get(key) or '(none)'}")
+    involves = [r.get("criteria") or names.get(r.get("ref")) or "" for r in event.get("refs") or [] if isinstance(r, dict)]
+    lines.append("involves: " + ("; ".join(item for item in involves if item) or "(none)"))
+    legacy = (event.get("metadata") or {}).get(LEGACY_KEY)
+    if legacy:
+        lines.append("older details: " + clip(json.dumps(legacy, ensure_ascii=False), 1200))
+    accounts = [a for a in result.get("accounts") or [] if isinstance(a, dict)]
+    at = next((i for i, a in enumerate(accounts) if a.get("id") == account.get("id")), len(accounts))
+    earlier = accounts[:at][-STRUCTURE_WORDS:]
+    if earlier:
+        lines += ["", "Earlier words, oldest first:"]
+        for item in earlier:
+            note = "" if item.get("source") == "user" else " (an assistant's note)"
+            lines.append(f"- {str(item.get('createdAt') or '')[:10]}{note}: {clip(item.get('text'), 300)}")
+    note = "" if account.get("source") == "user" else " (an assistant's note)"
+    lines += ["", f"The new words{note}:", str(account.get("text") or "")]
+    return "\n".join(lines), clipped
+
+
+def structure_patch(event: dict, answer: Any, account: dict, clipped: set, known: Any = ()) -> dict:
+    """A valid ``set`` holding only what the answer changes, each field whole (§5.3). ``known``: the
+    names of the Entities the Event's refs already name, so they are not added again as words."""
+    if not isinstance(answer, dict) or answer.get("change") is not True:
+        return {}
+    patch: dict = {}
+    title = answer.get("title")
+    if not event.get("title") and isinstance(title, str) and title.strip():
+        patch["title"] = clip(title, 80)
+    state = answer.get("state")
+    if isinstance(state, str) and state.strip() in STATES and state.strip() != event.get("state"):
+        patch["state"] = state.strip()
+    progress = answer.get("progress")
+    current = event.get("progress") if isinstance(event.get("progress"), dict) else {}
+    if isinstance(progress, str) and progress.strip() and clip(progress, 300) != current.get("text"):
+        patch["progress"] = {"text": clip(progress, 300), "timestamp": account.get("createdAt")}
+    facts = {}
+    stored = event.get("facts") or {}
+    for key in FACT_KEYS:
+        value = answer.get(key)
+        if key not in clipped and isinstance(value, str) and value.strip() and value.strip() != stored.get(key):
+            facts[key] = value.strip()
+    if facts:
+        patch["facts"] = facts
+    involves = answer.get("involves")
+    if isinstance(involves, list):
+        refs = [dict(r) for r in event.get("refs") or [] if isinstance(r, dict)]
+        seen = {str(r.get("criteria") or "").strip().lower() for r in refs} | {str(n).strip().lower() for n in known}
+        added = []
+        for item in involves:
+            if not isinstance(item, str) or not item.strip() or len(added) >= MAX_NEW_REFS:
+                continue
+            criteria = clip(item, 80)
+            key = criteria.lower()
+            if key in seen or key in NOT_A_REF:
+                continue
+            seen.add(key)
+            added.append({"criteria": criteria})
+        if added:
+            patch["refs"] = refs + added
+    return patch
+
+
+def unchanged_since(patch: dict, base: dict, current: dict) -> dict:
+    """The part of a patch whose fields nobody else changed between ``base`` and ``current``."""
+    out: dict = {}
+    for field, value in patch.items():
+        if field == "facts":
+            kept = {key: v for key, v in value.items()
+                    if (base.get("facts") or {}).get(key) == (current.get("facts") or {}).get(key)}
+            if kept:
+                out["facts"] = kept
+        elif base.get(field) == current.get(field):
+            out[field] = value
+    return out
+
 
 # ---------------------------------------------------------------------------- the plugin
 
@@ -608,6 +772,8 @@ class ProtocolChaosPlugin:
             self.capture_mode = "background"
         else:
             self.capture_mode = "model"
+        # Folding words into fields needs the same model as the background recording.
+        self.structure_mode = "auto" if self.capture_mode == "background" and settings.get("structure", "auto") == "auto" else "off"
         self.overview_in_prompt = False
         self._connections: dict = {}
         self._connections_lock = threading.Lock()
@@ -794,14 +960,87 @@ class ProtocolChaosPlugin:
                 if parent_id:
                     arguments["parentEventId"] = parent_id
             receipt = connection.writes.call("event_note", arguments, WRITE_TIMEOUT)
-            if isinstance(receipt, dict):
-                with connection.lock:
-                    connection.fetched = 0.0  # the directory changed
-                log.info("protocol-chaos: recorded on %s (%s)", receipt.get("eventId"), ",".join(receipt.get("changed") or []))
-            return receipt if isinstance(receipt, dict) else None
+            if not isinstance(receipt, dict):
+                return None
+            with connection.lock:
+                connection.fetched = 0.0  # the directory changed
+            log.info("protocol-chaos: recorded on %s (%s)", receipt.get("eventId"), ",".join(receipt.get("changed") or []))
         except Exception as error:
             log.warning("protocol-chaos: recording skipped (%s)", why(error))
             return None
+        if self.structure_mode == "auto":
+            self.structure(connection, receipt)
+        return receipt
+
+    def fold_answer(self, text: str) -> Optional[dict]:
+        arguments: dict = {
+            "instructions": STRUCTURE_INSTRUCTIONS,
+            "input": [{"type": "text", "text": text}],
+            "json_schema": STRUCTURE_SCHEMA,
+            "purpose": "protocol-chaos.structure",
+            "temperature": 0.0,
+            "max_tokens": 2000,
+            "timeout": CAPTURE_TIMEOUT,
+        }
+        if self.capture_task and accepts(self.llm.complete_structured, "task"):
+            arguments["task"] = self.capture_task
+        result = self.llm.complete_structured(**arguments)
+        parsed = getattr(result, "parsed", None)
+        return parsed if isinstance(parsed, dict) else None
+
+    def structure(self, connection: Connection, receipt: dict) -> Optional[dict]:
+        """Folds the words just recorded into their Event's fields: the per-message part of
+        organizing, grounded on those words (``accountId``). When someone else wrote in between,
+        it reads again once and keeps whatever they changed."""
+        event_id, account_id = receipt.get("eventId"), receipt.get("accountId")
+        if not event_id or not account_id:
+            return None
+        answer = None
+        base: dict = {}
+        try:
+            for attempt in (1, 2):
+                result = connection.reads.call(
+                    "event_get_protocol", {"eventId": event_id, "accounts": STRUCTURE_WORDS + 1}, READ_TIMEOUT
+                )
+                event = result.get("event") if isinstance(result, dict) else None
+                accounts = [a for a in (result or {}).get("accounts") or [] if isinstance(a, dict)] if isinstance(result, dict) else []
+                account = next((a for a in accounts if a.get("id") == account_id), None)
+                if not isinstance(event, dict) or account is None:
+                    return None
+                if answer is None:
+                    text, clipped = fold_input(result, account)
+                    answer = self.fold_answer(text)
+                    base = event
+                else:
+                    clipped = {key for key in FACT_KEYS if len(str((event.get("facts") or {}).get(key) or "")) > FACT_LIMIT}
+                known = [e.get("name") for e in result.get("entities") or [] if isinstance(e, dict) and e.get("name")]
+                patch = structure_patch(event, answer, account, clipped, known)
+                if attempt == 2:
+                    patch = unchanged_since(patch, base, event)
+                if not patch:
+                    return None
+                try:
+                    done = connection.writes.call("event_record_expression", {
+                        "eventId": event_id,
+                        "actor": {"kind": "agent", "id": self.actor},
+                        "text": account.get("text"),
+                        "accountSource": account.get("source") or "user",
+                        "accountId": account_id,
+                        "expectedVersion": event.get("version"),
+                        "set": patch,
+                    }, WRITE_TIMEOUT)
+                except ToolError as error:
+                    if error.code == "VERSION_CONFLICT" and attempt == 1:
+                        continue
+                    raise
+                with connection.lock:
+                    connection.fetched = 0.0
+                if isinstance(done, dict):
+                    log.info("protocol-chaos: structured %s (%s)", event_id, ",".join(done.get("changed") or []))
+                return done if isinstance(done, dict) else None
+        except Exception as error:
+            log.warning("protocol-chaos: structure skipped (%s)", why(error))
+        return None
 
 
 def register(ctx: Any) -> None:
@@ -810,6 +1049,7 @@ def register(ctx: Any) -> None:
     settings = {
         "actor": config_value(ctx, "actor", "hermes"),
         "capture": config_value(ctx, "capture", "auto", ("auto", "model", "off")),
+        "structure": config_value(ctx, "structure", "auto", ("auto", "off")),
         "overview": config_value(ctx, "overview", "auto", ("auto", "prompt", "turn", "off")),
     }
     try:
@@ -838,6 +1078,11 @@ def register(ctx: Any) -> None:
                     ctx.register_skill(child.name, skill)
                 except Exception as error:
                     log.info("protocol-chaos: skill %s not registered (%s)", child.name, type(error).__name__)
+    if hasattr(ctx, "register_automation_blueprint"):  # Hermes 0.21.7 and later
+        try:
+            ctx.register_automation_blueprint("organizer", **ORGANIZER_BLUEPRINT)
+        except Exception as error:
+            log.info("protocol-chaos: organizer blueprint not registered (%s)", type(error).__name__)
     plugin = ProtocolChaosPlugin(settings, llm=llm, capture_task=task)
     if settings["overview"] in ("auto", "prompt") and hasattr(ctx, "register_system_prompt_section"):
         try:
@@ -850,6 +1095,7 @@ def register(ctx: Any) -> None:
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
     log.info(
-        "protocol-chaos %s: overview in %s, recording %s",
+        "protocol-chaos %s: overview in %s, recording %s, structure %s",
         PLUGIN_VERSION, "system prompt" if plugin.overview_in_prompt else "first turn", plugin.capture_mode,
+        plugin.structure_mode,
     )

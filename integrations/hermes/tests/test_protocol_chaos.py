@@ -65,17 +65,19 @@ class FakeResult:
 
 
 class FakeLlm:
-    """Answers each recording decision with what the test set, and keeps the requests."""
+    """Answers each recording decision (``decision``) and structure update (``structure``) with what
+    the test set, and keeps the requests."""
 
     def __init__(self):
         self.decision = {"record": False}
+        self.structure = {"change": False}
         self.calls = []
 
     def complete_structured(self, *, instructions, input, json_schema=None, purpose=None, temperature=None,
                             max_tokens=None, timeout=None, task=None, **kwargs):
         self.calls.append({"input": input, "task": task, "purpose": purpose})
-        decision = self.decision(input) if callable(self.decision) else self.decision
-        return FakeResult(decision)
+        answer = self.structure if purpose == "protocol-chaos.structure" else self.decision
+        return FakeResult(answer(input) if callable(answer) else answer)
 
 
 class NewHermes:
@@ -86,6 +88,7 @@ class NewHermes:
         self.sections = {}
         self.tasks = {}
         self.skills = {}
+        self.blueprints = {}
         self.llm = FakeLlm()
         self.settings = settings or {}
 
@@ -103,6 +106,12 @@ class NewHermes:
 
     def register_skill(self, name, path, description="", frontmatter=None):
         self.skills[name] = Path(path)
+
+    def register_automation_blueprint(self, key, *, title, description, schedule_template, prompt_template,
+                                      category="general", slots=(), deliver_default="origin", skills=(), tags=()):
+        self.blueprints[key] = {"title": title, "description": description, "schedule_template": schedule_template,
+                                "prompt_template": prompt_template, "category": category, "slots": list(slots),
+                                "skills": list(skills), "tags": list(tags)}
 
 
 class OldHermes:
@@ -134,7 +143,8 @@ class RecordingContext:
         return default
 
     def __getattr__(self, name):
-        if name in ("register_system_prompt_section", "register_auxiliary_task", "register_skill"):
+        if name in ("register_system_prompt_section", "register_auxiliary_task", "register_skill",
+                    "register_automation_blueprint"):
             return lambda *args, **kwargs: None
         raise AttributeError(name)
 
@@ -203,6 +213,16 @@ class PluginTest(unittest.TestCase):
 
     def protocol(self, event_id):
         return self.repo.call("event_get_protocol", {"eventId": event_id, "accounts": "all"}, 10)
+
+    def pick(self, title):
+        """A recording decision that puts the words on the listed matter with this title."""
+        return lambda input: {"record": True, "ref": re.search(rf"- (m\d+): {re.escape(title)} \[", input[0]["text"]).group(1)}
+
+    def organize(self, event_id, fields):
+        doc = self.protocol(event_id)
+        return self.repo.call("event_record_expression", {
+            "eventId": event_id, "actor": {"kind": "agent", "id": "hermes"}, "expectedVersion": doc["event"]["version"],
+            "accountId": doc["accounts"][0]["id"], "text": doc["accounts"][0]["text"], "set": fields}, 10)
 
     def loaded(self, host=None):
         host = host or NewHermes()
@@ -334,6 +354,107 @@ class PluginTest(unittest.TestCase):
             {"role": "assistant", "tool_calls": [{"function": {"name": "mcp_protocol_chaos_event_note"}}]}])
         self.assertEqual(len(plugin.threads), before)
 
+    # -- structure
+
+    def test_recorded_words_are_folded_into_the_matters_structure(self):
+        host, plugin = self.loaded()
+        matter = self.note("We want to repaint the study this autumn.", title="2026 年秋天书房刷墙")["eventId"]
+        message = "书房刷墙预算定在三千以内，下周末先去买漆"
+        seen = {}
+
+        def fold(input):
+            seen["text"] = input[0]["text"]
+            return {"change": True, "state": "active", "progress": "下周末去买漆", "constraint": "预算三千以内。",
+                    "involves": ["书房", "我"], "goal": None, "title": None}
+
+        host.llm.decision = self.pick("2026 年秋天书房刷墙")
+        host.llm.structure = fold
+        receipt = plugin.capture(message)
+        self.assertEqual(receipt["eventId"], matter)
+        doc = self.protocol(matter)
+        event, account = doc["event"], doc["accounts"][-1]
+        self.assertEqual(account["text"], message)
+        self.assertEqual(len(doc["accounts"]), 2)  # grounded on the recorded words, not a second copy
+        self.assertEqual(event["state"], "active")
+        self.assertEqual(event["facts"], {"constraint": "预算三千以内。"})
+        self.assertEqual(event["progress"], {"text": "下周末去买漆", "timestamp": account["createdAt"]})
+        self.assertEqual(event["refs"], [{"criteria": "书房"}])  # never the user
+        self.assertIn("The new words were said on " + account["createdAt"][:10], seen["text"])
+        self.assertIn("title: 2026 年秋天书房刷墙", seen["text"])
+        self.assertIn(message, seen["text"])
+        self.assertIn("We want to repaint the study this autumn.", seen["text"])  # an earlier word
+        changes = [r for r in self.repo.call("event_get_revisions", {"eventId": matter}, 10)["revisions"]
+                   if r["type"] == "field.changed" and r["sourceAccountIds"] == [account["id"]]]
+        self.assertEqual({r["payload"]["field"] for r in changes}, {"state", "progress", "facts.constraint", "refs"})
+        self.assertTrue(all(r["actor"] == {"kind": "agent", "id": "hermes"} for r in changes))
+        self.assertEqual(host.llm.calls[-1]["purpose"], "protocol-chaos.structure")
+        self.assertEqual(host.llm.calls[-1]["task"], "protocol_chaos_capture")
+        # The next turn already shows it.
+        context = plugin.pre_llm_call(session_id="st1", user_message="书房刷墙那件事", conversation_history=[])["context"]
+        self.assertIn("constraint: 预算三千以内。", context)
+        self.assertIn("progress: 下周末去买漆", context)
+
+    def test_the_structure_update_keeps_a_newer_write(self):
+        host, plugin = self.loaded()
+        matter = self.note("Plan the garden next spring.", title="2027 年春天整理花园")["eventId"]
+
+        def fold(input):
+            # Another assistant changes the plan while the model is still thinking.
+            self.organize(matter, {"facts": {"plan": "先翻土，四月再种。"}})
+            return {"change": True, "constraint": "预算两千以内。", "plan": "种番茄。"}
+
+        host.llm.decision = self.pick("2027 年春天整理花园")
+        host.llm.structure = fold
+        plugin.capture("花园那件事，预算改成两千，种番茄")
+        facts = self.protocol(matter)["event"]["facts"]
+        self.assertEqual(facts, {"constraint": "预算两千以内。", "plan": "先翻土，四月再种。"})
+
+    def test_the_structure_update_writes_only_valid_changes(self):
+        host, plugin = self.loaded()
+        matter = self.note("Learn to swim this year.", title="2026 年学游泳")["eventId"]
+        self.organize(matter, {"facts": {"goal": "学会自由泳。"}, "refs": [{"criteria": "游泳馆"}]})
+        before = self.protocol(matter)["event"]
+        host.llm.decision = self.pick("2026 年学游泳")
+        host.llm.structure = {"change": True, "title": "别的标题", "state": "finished", "goal": "学会自由泳。",
+                              "plan": "  ", "constraint": None, "involves": ["游泳馆", "  ", 42], "extra": "x"}
+        plugin.capture("游泳课报好了吗我还没想好")
+        after = self.protocol(matter)["event"]
+        self.assertEqual(after["version"], before["version"] + 1)  # only the words were added
+        for field in ("title", "state", "facts", "refs"):
+            self.assertEqual(after.get(field), before.get(field))
+        # A model answer that is not an object, or says nothing changed, writes nothing either.
+        host.llm.structure = ["not", "an", "object"]
+        plugin.capture("游泳课下周开始")
+        host.llm.structure = {"change": False, "goal": "别的目标"}
+        plugin.capture("游泳课改到周日")
+        self.assertEqual(self.protocol(matter)["event"]["facts"], {"goal": "学会自由泳。"})
+
+    def test_structure_can_be_turned_off(self):
+        host = NewHermes(settings={"structure": "off"})
+        self.plugin.register(host)
+        plugin = host.hooks["pre_llm_call"].__self__
+        self.addCleanup(plugin.close)
+        self.assertEqual(plugin.structure_mode, "off")
+        matter = self.note("Read ten books this year.", title="2026 年读十本书")["eventId"]
+        host.llm.decision = self.pick("2026 年读十本书")
+        host.llm.structure = {"change": True, "goal": "读完十本书。"}
+        plugin.capture("读书这件事我已经读完三本了")
+        self.assertEqual([call["purpose"] for call in host.llm.calls], ["protocol-chaos.capture"])
+        self.assertNotIn("facts", self.protocol(matter)["event"])
+
+    def test_the_organizer_is_offered_as_a_blueprint(self):
+        host, plugin = self.loaded()
+        self.assertEqual(list(host.blueprints), ["organizer"])
+        blueprint = host.blueprints["organizer"]
+        self.assertEqual(blueprint["skills"], ["protocol-chaos:organizer"])
+        slots = {slot["name"]: slot for slot in blueprint["slots"]}
+        self.assertEqual(set(slots), {"time", "deliver"})
+        self.assertTrue(all(slot.get("default") for slot in slots.values()))
+        self.assertEqual(blueprint["schedule_template"], "{minute} {hour} * * *")
+        self.assertIn("protocol-chaos:organizer", blueprint["prompt_template"])
+        self.assertNotRegex(blueprint["prompt_template"], r"\{\w+\}")
+        self.assertTrue((PLUGIN_DIR / "skills" / "organizer" / "SKILL.md").is_file())
+
     # -- failure
 
     def test_an_unreachable_server_or_no_credentials_changes_nothing(self):
@@ -355,6 +476,7 @@ class PluginTest(unittest.TestCase):
         plugin = host.hooks["pre_llm_call"].__self__
         self.addCleanup(plugin.close)
         self.assertEqual(plugin.capture_mode, "model")
+        self.assertEqual(plugin.structure_mode, "off")
         first = plugin.pre_llm_call(session_id="o1", user_message="你好", conversation_history=[])["context"]
         self.assertIn(self.plugin.OVERVIEW_MARKER, first)
         self.assertIn("record them with one event_note", first)
@@ -373,12 +495,14 @@ class PluginTest(unittest.TestCase):
             message = "装修预算我想压到十五万，暗号 qq-5512"
             host.llm.decision = lambda input: {
                 "record": True, "ref": re.search(r"- (m\d+): 2026 年冬天装修", input[0]["text"]).group(1)}
+            host.llm.structure = {"change": True, "constraint": "装修预算十五万以内。", "involves": ["装修队"]}
             plugin.pre_llm_call(session_id="l1", user_message=message, conversation_history=[])
             plugin.capture(message)
         finally:
             logger.removeHandler(handler)
         self.assertTrue(records)
-        self.assertTrue(all("qq-5512" not in line and "装修" not in line for line in records))
+        self.assertTrue(any(line.startswith("protocol-chaos: structured ") for line in records))
+        self.assertTrue(all("qq-5512" not in line and "装修" not in line and "十五万" not in line for line in records))
 
     def test_settings_and_the_capability_probe(self):
         host = NewHermes(settings={"actor": "mac-mini", "capture": "off", "overview": "bogus"})
@@ -387,6 +511,8 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(plugin.actor, "mac-mini")
         self.assertEqual(plugin.capture_mode, "off")
         self.assertEqual(plugin.settings["overview"], "auto")
+        self.assertEqual(plugin.settings["structure"], "auto")
+        self.assertEqual(plugin.structure_mode, "off")  # recording is off, so is the structure update
         probe = RecordingContext()
         self.plugin.register(probe)
         manifest = (PLUGIN_DIR / "plugin.yaml").read_text(encoding="utf-8")
@@ -453,6 +579,43 @@ class HelperTest(unittest.TestCase):
         self.assertLessEqual(len(listed), self.plugin.CAPTURE_LIST_CHARS)
         self.assertTrue(refs)
         self.assertTrue(all(ref in listed for ref in refs))
+
+    def test_structure_patch_and_newer_writes(self):
+        patch = self.plugin.structure_patch
+        event = {"title": "x", "state": "active", "facts": {"goal": "g", "plan": "p" * 5000},
+                 "refs": [{"ref": "ent_1"}], "progress": {"text": "a", "timestamp": "2026-10-01T00:00:00.000Z"}}
+        account = {"createdAt": "2026-10-22T01:02:03.000Z"}
+        answer = {"change": True, "plan": "short", "goal": "g2", "state": "done", "progress": "a", "title": "y",
+                  "involves": ["Mei", "mei", "Lisbon", "我", "the user"]}
+        self.assertEqual(patch(event, answer, account, {"plan"}, ["Mei"]),
+                         {"state": "done", "facts": {"goal": "g2"}, "refs": [{"ref": "ent_1"}, {"criteria": "Lisbon"}]})
+        self.assertEqual(patch(event, {"change": False, "goal": "x"}, account, set()), {})
+        self.assertEqual(len(patch({"state": "emerging"}, {"change": True, "title": "t" * 100}, account, set())["title"]), 80)
+        self.assertEqual(patch({"state": "emerging"}, {"change": True, "progress": "began"}, account, set())["progress"],
+                         {"text": "began", "timestamp": "2026-10-22T01:02:03.000Z"})
+        unchanged = self.plugin.unchanged_since
+        base = {"state": "active", "facts": {"goal": "g", "plan": "p"}}
+        current = {"state": "waiting", "facts": {"goal": "g", "plan": "p2"}}
+        self.assertEqual(unchanged({"state": "done", "facts": {"goal": "g3", "plan": "p3"}}, base, current), {"facts": {"goal": "g3"}})
+
+    def test_fold_input_shows_the_matter_and_hides_a_fact_too_long_to_rewrite(self):
+        result = {"event": {"title": "t", "state": "active", "facts": {"goal": "g", "plan": "p" * 5000},
+                            "refs": [{"ref": "ent_1"}, {"criteria": "Lisbon"}],
+                            "metadata": {"dev.protocol-chaos/legacy-0.1": {"facts": {"budget": 20000}}}},
+                  "entities": [{"id": "ent_1", "kind": "person", "name": "Mei"}],
+                  "accounts": [{"id": "a1", "text": "first", "source": "user", "createdAt": "2026-10-01T00:00:00.000Z"},
+                               {"id": "a2", "text": "a guess", "source": "agent_response", "createdAt": "2026-10-02T00:00:00.000Z"},
+                               {"id": "a3", "text": "new words", "source": "user", "createdAt": "2026-10-22T00:00:00.000Z"},
+                               {"id": "a4", "text": "later", "source": "user", "createdAt": "2026-10-22T00:00:01.000Z"}]}
+        text, clipped = self.plugin.fold_input(result, result["accounts"][2])
+        self.assertEqual(clipped, {"plan"})
+        self.assertIn("plan: (too long to show here; leave it null)", text)
+        self.assertNotIn("p" * 100, text)
+        self.assertIn("involves: Mei; Lisbon", text)
+        self.assertIn('older details: {"facts": {"budget": 20000}}', text)
+        self.assertIn("- 2026-10-02 (an assistant's note): a guess", text)
+        self.assertNotIn("later", text)  # words after the new ones are not "earlier"
+        self.assertTrue(text.endswith("The new words:\nnew words"))
 
     def test_verbatim_words(self):
         v = self.plugin.verbatim_words

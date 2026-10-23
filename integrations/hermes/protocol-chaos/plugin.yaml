@@ -1,6 +1,6 @@
 name: protocol-chaos
-version: 0.2.0
-description: "Protocol Chaos for Hermes: the user's long-lived matters, kept on their own server, are in the conversation before the model answers, and the user's words are recorded there after it answers. Hermes decides on this machine what to read; the server never sees the messages."
+version: 0.2.1
+description: "Protocol Chaos for Hermes: the user's long-lived matters, kept on their own server, are in the conversation before the model answers; after it answers, the user's words are recorded and folded into that matter's goal, constraint, plan, progress and state, which every assistant on the server reads. Hermes decides on this machine what to read; the server never sees the messages."
 author: chaos-xxl
 license: Apache-2.0
 homepage: https://github.com/chaos-xxl/protocol-chaos
@@ -27,6 +27,12 @@ config_schema:
     default: auto
     label: "Recording"
     description: "auto: decide in the background with the recording model after each answer; model: ask the model to record with event_note; off: record nothing."
+  structure:
+    type: str
+    choices: [auto, "off"]
+    default: auto
+    label: "Structure"
+    description: "auto: after recording, fold the words into that matter's fields with the recording model; off: leave it to the daily organizer."
   overview:
     type: str
     choices: [auto, prompt, turn, "off"]

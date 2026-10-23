@@ -1,7 +1,7 @@
 ---
 name: organizer
 description: Fold the words recorded in Protocol Chaos into structure (draft 0.2 servers)
-version: 0.2.0
+version: 0.2.1
 metadata:
   hermes:
     tags: [protocol-chaos, organizer, scheduled]
@@ -9,18 +9,20 @@ metadata:
 
 # Protocol Chaos organizer
 
-During the day, assistants only record what the user says (`event_note`): the words are
-stored, nothing else changes, so no answer waits on the repository. This run does the rest.
-It reads the words recorded since the last run and folds them into structure: title, state,
-progress, facts, the people and places involved, and the hierarchy. Nobody is waiting for
-it. Be thorough and careful, and never ask the user anything during the run.
+During the day, assistants record what the user says (`event_note`), so no answer waits on
+the repository. The Hermes plugin also folds each message it records into that Event's fields
+right away; words other assistants recorded may not be folded yet. This run does the rest. It
+reads the words recorded since the last run, completes the fields where they need it, and
+does what one Event at a time cannot: the hierarchy, duplicates, and the people and places
+involved. Nobody is waiting for it. Be thorough and careful, and never ask the user anything
+during the run.
 
 It needs the repository's tools, so Hermes must also have the server configured as the MCP
 server `protocol_chaos`, with the same token as the plugin.
 
 ## When to use
 
-- The scheduled run, usually at night.
+- The scheduled run, usually at night (`/blueprint protocol-chaos:organizer` creates it).
 - When the user asks to organize their Protocol Chaos repository.
 
 ## Procedure

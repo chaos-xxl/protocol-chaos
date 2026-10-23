@@ -13,10 +13,12 @@ repository never holds up a reply:
 - **After the model answers.** In a background thread, Hermes's recording model decides
   whether your message changes one of your matters or starts one, and which. If so, the
   plugin records your words with `event_note`, copied from the message itself, so they are
-  stored verbatim.
-- **Later, optionally.** A bundled skill, `protocol-chaos:organizer`, folds the words recorded
-  during the day into structure: facts, titles, people, progress, the hierarchy. Run it on a
-  schedule.
+  stored verbatim. Then it folds them into that matter: its goal, constraints, plan,
+  progress, state and the people and places involved, grounded on the words just recorded.
+  The next turn, and every other assistant on your server, sees the change.
+- **Once a day.** A bundled skill, `protocol-chaos:organizer`, does the rest: it links parts
+  to the matters they belong to, merges duplicates, and keeps records of the people and
+  places you mention. Turn it on with `/blueprint protocol-chaos:organizer`.
 
 Everything fails open: if the server is unreachable or answers with an error, the turn goes on
 as it would without the plugin. The plugin logs ids and counts, never what you said.
@@ -29,9 +31,11 @@ as it would without the plugin. The plugin logs ids and counts, never what you s
   [protocol](https://github.com/chaos-xxl/protocol-chaos/blob/main/PROTOCOL.md)).
 - **To the model provider Hermes already uses**, only for recording, through Hermes's own
   auxiliary-model route: your message, up to 600 characters of the assistant's previous reply,
-  and the titles and states of your matters (up to about 6,000 characters).
+  and the titles and states of your matters (up to about 6,000 characters). When it records,
+  also the matter it records on: its current fields and its latest words.
 - Nothing else. No telemetry, no other network calls, no files read outside the plugin's own
-  directory. One short-lived background thread per recorded turn.
+  directory. One short-lived background thread per message it considers recording: one model
+  call to decide, and one more when it records.
 
 ## Requirements
 
@@ -63,7 +67,7 @@ Hermes asks for two values and keeps them with your other credentials:
 Restart Hermes (and the gateway, if one runs). The log then shows one line:
 
 ```text
-protocol-chaos 0.2.0: overview in system prompt, recording background
+protocol-chaos 0.2.1: overview in system prompt, recording background, structure auto
 ```
 
 `overview in first turn` on a Hermes without system prompt sections; `recording model` where
@@ -79,10 +83,11 @@ as a form):
 |---|---|---|
 | `actor` | `hermes` | The client name the token was issued for. The plugin writes as `{"kind": "agent", "id": <actor>}`. |
 | `capture` | `auto` | `auto` records in the background after each answer; `model` asks the model to record; `off` records nothing. |
+| `structure` | `auto` | `auto` folds recorded words into their matter's fields right away; `off` leaves that to the organizer. Needs background recording. |
 | `overview` | `auto` | Where the overview goes: the system prompt (`auto`, `prompt`), the first turn's message (`turn`), or nowhere (`off`). |
 
-Recording runs as the auxiliary task `protocol_chaos_capture`, which follows the model
-configured for compression, a small and cheap one. Pin another under
+Recording and the structure update run as the auxiliary task `protocol_chaos_capture`, which
+follows the model configured for compression, a small and cheap one. Pin another under
 `auxiliary.protocol_chaos_capture`.
 
 ## The organizer
@@ -100,7 +105,14 @@ mcp_servers:
       Authorization: "Bearer ${PROTOCOL_CHAOS_TOKEN}"
 ```
 
-Then create a scheduled job, for example from a chat with Hermes:
+Then turn the organizer on, from a chat with Hermes:
+
+```text
+/blueprint protocol-chaos:organizer
+```
+
+It asks for a time (04:00 by default) and where to report, and creates a daily job. On a Hermes
+older than 0.21.7, which has no blueprints, create the job yourself:
 
 ```text
 /cron add "every day at 4am" "Load the skill protocol-chaos:organizer with skill_view and follow it exactly."
