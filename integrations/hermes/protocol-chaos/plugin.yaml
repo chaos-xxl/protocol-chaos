@@ -1,5 +1,5 @@
 name: protocol-chaos
-version: 0.2.1
+version: 0.2.2
 description: "Protocol Chaos for Hermes: the user's long-lived matters, kept on their own server, are in the conversation before the model answers; after it answers, the user's words are recorded and folded into that matter's goal, constraint, plan, progress and state, which every assistant on the server reads. Hermes decides on this machine what to read; the server never sees the messages."
 author: chaos-xxl
 license: Apache-2.0

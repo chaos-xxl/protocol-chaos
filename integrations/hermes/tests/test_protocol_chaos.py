@@ -394,6 +394,39 @@ class PluginTest(unittest.TestCase):
         self.assertIn("constraint: 预算三千以内。", context)
         self.assertIn("progress: 下周末去买漆", context)
 
+    def test_the_structure_update_reads_the_conversation_around_the_words(self):
+        host, plugin = self.loaded()
+        matter = self.note("Change the living room curtains this winter.", title="2026 年冬天客厅换窗帘")["eventId"]
+        seen = {}
+
+        def fold(input):
+            seen["text"] = input[0]["text"]
+            return {"change": True, "plan": "米白色亚麻窗帘，配遮光内衬。"}
+
+        host.llm.decision = self.pick("2026 年冬天客厅换窗帘")
+        host.llm.structure = fold
+        history = [
+            {"role": "user", "content": "客厅窗帘你帮我出两个方案"},
+            {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "web_search"}}]},
+            {"role": "tool", "content": "search results: curtains 2026"},
+            {"role": "assistant", "content": "方案一：深灰丝绒；方案二：米白色亚麻，配遮光内衬。"},
+            {"role": "user", "content": "窗帘就按第二个方案来", "api_content": "窗帘就按第二个方案来\n\n[Protocol Chaos · added]"},
+            {"role": "assistant", "content": "好的，米白色亚麻配遮光内衬。"},
+        ]
+        plugin.post_llm_call(session_id="cv1", user_message="窗帘就按第二个方案来",
+                             assistant_response="好的，米白色亚麻配遮光内衬。", conversation_history=history)
+        for thread in plugin.threads:
+            thread.join(10)
+        text = seen["text"]
+        self.assertIn("The conversation just before the new words, oldest first:", text)
+        self.assertIn("assistant: 方案一：深灰丝绒；方案二：米白色亚麻，配遮光内衬。", text)
+        self.assertIn("user: 客厅窗帘你帮我出两个方案", text)
+        self.assertIn("The assistant's reply to the new words:\n好的，米白色亚麻配遮光内衬。", text)
+        self.assertNotIn("search results", text)  # no tool traffic
+        self.assertNotIn("[Protocol Chaos", text)  # nor context a plugin added
+        self.assertTrue(text.endswith("The new words:\n窗帘就按第二个方案来"))
+        self.assertEqual(self.protocol(matter)["event"]["facts"], {"plan": "米白色亚麻窗帘，配遮光内衬。"})
+
     def test_the_structure_update_keeps_a_newer_write(self):
         host, plugin = self.loaded()
         matter = self.note("Plan the garden next spring.", title="2027 年春天整理花园")["eventId"]
@@ -616,6 +649,23 @@ class HelperTest(unittest.TestCase):
         self.assertIn("- 2026-10-02 (an assistant's note): a guess", text)
         self.assertNotIn("later", text)  # words after the new ones are not "earlier"
         self.assertTrue(text.endswith("The new words:\nnew words"))
+
+    def test_recent_conversation(self):
+        recent = self.plugin.recent_conversation
+        history = [{"role": "user", "content": "a" * 3000}] + [
+            {"role": "assistant" if i % 2 else "user", "content": [{"type": "text", "text": f"m{i}"}]} for i in range(10)
+        ] + [{"role": "user", "content": "now"}]
+        out = recent(history, "the reply", "now")
+        self.assertTrue(out.startswith("The conversation just before the new words, oldest first:\n"))
+        self.assertEqual(out.count("\nuser: ") + out.count("\nassistant: "), self.plugin.CONTEXT_MESSAGES)
+        self.assertIn("assistant: m9", out)  # the newest are kept
+        self.assertNotIn("m3", out)
+        self.assertNotIn("now", out)  # the new words come separately
+        self.assertTrue(out.endswith("The assistant's reply to the new words:\nthe reply"))
+        self.assertLessEqual(len(out), self.plugin.CONTEXT_CHARS + self.plugin.CONTEXT_MESSAGE_CHARS + 200)
+        # When the history stops before the current message, nothing of it is cut off.
+        self.assertIn("user: earlier", recent([{"role": "user", "content": "earlier"}], None, "now"))
+        self.assertEqual(recent([], None, "now"), "")
 
     def test_verbatim_words(self):
         v = self.plugin.verbatim_words

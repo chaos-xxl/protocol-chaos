@@ -16,8 +16,9 @@ themselves.
   plugin records the user's words with ``event_note``, copied from the message itself, so they
   are always verbatim. Then it folds those words into that Event's fields (title, state,
   progress, goal, constraint, plan, the people and things involved) with
-  ``event_record_expression``, grounded on the words just recorded, so the next turn and every
-  other assistant see the change. Without ``ctx.llm`` the model is asked to record instead.
+  ``event_record_expression``, grounded on the words just recorded and read together with the
+  last few messages of the conversation, so the next turn and every other assistant see the
+  change. Without ``ctx.llm`` the model is asked to record instead.
 - A bundled skill, ``protocol-chaos:organizer``, does the rest of the organizing once a day
   (the hierarchy, duplicates, people and places); the plugin offers it as an automation
   blueprint, ``/blueprint protocol-chaos:organizer``.
@@ -51,7 +52,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("protocol_chaos")
 
-PLUGIN_VERSION = "0.2.1"
+PLUGIN_VERSION = "0.2.2"
 URL_SECRET = "PROTOCOL_CHAOS_URL"
 TOKEN_SECRET = "PROTOCOL_CHAOS_TOKEN"
 READ_TIMEOUT = 6.0
@@ -74,6 +75,11 @@ CAPTURE_LIST_CHARS = 6000
 STRUCTURE_WORDS = 6
 FACT_LIMIT = 4000
 MAX_NEW_REFS = 5
+# The conversation the structure update reads to understand the new words ("the second option"):
+# the messages before them, newest kept first when cutting, and the assistant's reply to them.
+CONTEXT_MESSAGES = 6
+CONTEXT_CHARS = 5000
+CONTEXT_MESSAGE_CHARS = 1200
 LEGACY_KEY = "dev.protocol-chaos/legacy-0.1"
 FACT_KEYS = ("goal", "constraint", "plan")
 STATES = ("emerging", "active", "waiting", "dormant", "done", "cancelled")
@@ -582,6 +588,51 @@ def last_assistant_text(history: Any) -> str:
     return ""
 
 
+def content_text(content: Any) -> str:
+    """The text of a stored message's content: a string, or its text parts."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(part.get("text", "")) for part in content
+                         if isinstance(part, dict) and isinstance(part.get("text"), str))
+    return ""
+
+
+def recent_conversation(history: Any, reply: Any = None, current: Optional[str] = None) -> str:
+    """The messages before the user's ``current`` one and the assistant's reply to it, as text for
+    the structure update. Only what was said (``content``), never context a plugin added to a turn
+    (Hermes keeps that in ``api_content``), and no tool traffic."""
+    messages = [m for m in (history or []) if isinstance(m, dict)]
+    # The history usually ends with the current message and its answer; cut there when it does.
+    latest = len(messages)
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") == "user":
+            if current is None or _squash(content_text(messages[i].get("content"))) == _squash(current):
+                latest = i
+            break
+    lines: list = []
+    size = 0
+    for message in reversed(messages[:latest]):
+        if message.get("role") not in ("user", "assistant"):
+            continue
+        text = content_text(message.get("content"))
+        if not text.strip():
+            continue
+        line = f"{message['role']}: {clip(text, CONTEXT_MESSAGE_CHARS)}"
+        if size + len(line) > CONTEXT_CHARS or len(lines) >= CONTEXT_MESSAGES:
+            break
+        lines.append(line)
+        size += len(line) + 1
+    lines.reverse()
+    out = ""
+    if lines:
+        out = "The conversation just before the new words, oldest first:\n" + "\n".join(lines)
+    reply_text = message_text(reply).strip()
+    if reply_text:
+        out += ("\n\n" if out else "") + "The assistant's reply to the new words:\n" + clip(reply_text, CONTEXT_MESSAGE_CHARS)
+    return out
+
+
 def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
@@ -659,12 +710,16 @@ STRUCTURE_INSTRUCTIONS = (
     "Write relative times as concrete dates, counted from the day the new words were said. Never write 'the "
     "user'; write the facts themselves. Words marked as an assistant's note are an inference: fold them only as "
     "an inference with its basis, and never over the user's own words. Older details are things the user said "
-    "before: when you write the aspect they belong to, fold in what still holds. Answer in JSON."
+    "before: when you write the aspect they belong to, fold in what still holds. The conversation around the new "
+    "words is context: use it to understand what they refer to, such as 'the second option' or 'that date', and "
+    "write only what the user said or accepted; a suggestion of the assistant's that the user did not take up is "
+    "not a fact. Answer in JSON."
 )
 
 
-def fold_input(result: dict, account: dict) -> tuple:
-    """The text the structure update shows the model, and the facts too long to rewrite."""
+def fold_input(result: dict, account: dict, conversation: str = "") -> tuple:
+    """The text the structure update shows the model, and the facts too long to rewrite.
+    ``conversation``: the recent messages and the assistant's reply (``recent_conversation``)."""
     event = result.get("event") or {}
     names = {e.get("id"): e.get("name") for e in result.get("entities") or [] if isinstance(e, dict)}
     facts = event.get("facts") or {}
@@ -694,6 +749,8 @@ def fold_input(result: dict, account: dict) -> tuple:
         for item in earlier:
             note = "" if item.get("source") == "user" else " (an assistant's note)"
             lines.append(f"- {str(item.get('createdAt') or '')[:10]}{note}: {clip(item.get('text'), 300)}")
+    if conversation:
+        lines += ["", conversation]
     note = "" if account.get("source") == "user" else " (an assistant's note)"
     lines += ["", f"The new words{note}:", str(account.get("text") or "")]
     return "\n".join(lines), clipped
@@ -907,10 +964,12 @@ class ProtocolChaosPlugin:
                 or kwargs.get("parent_session_id") or recorded_this_turn(conversation_history)):
             return None
         before = last_assistant_text(conversation_history)
+        conversation = (recent_conversation(conversation_history, assistant_response, text)
+                        if self.structure_mode == "auto" else "")
         # The worker carries this turn's context (Hermes's secret scope among it), so it reads
         # the same profile's credentials as the turn.
         run = contextvars.copy_context().run
-        thread = threading.Thread(target=run, args=(self.capture, text, before), daemon=True,
+        thread = threading.Thread(target=run, args=(self.capture, text, before, conversation), daemon=True,
                                   name="protocol-chaos-capture")
         self.threads = [item for item in self.threads if item.is_alive()] + [thread]
         thread.start()
@@ -934,7 +993,7 @@ class ProtocolChaosPlugin:
         parsed = getattr(result, "parsed", None)
         return parsed if isinstance(parsed, dict) else None
 
-    def capture(self, text: str, before: str = "") -> Optional[dict]:
+    def capture(self, text: str, before: str = "", conversation: str = "") -> Optional[dict]:
         try:
             connection = self.connection()
             if connection is None:
@@ -969,7 +1028,7 @@ class ProtocolChaosPlugin:
             log.warning("protocol-chaos: recording skipped (%s)", why(error))
             return None
         if self.structure_mode == "auto":
-            self.structure(connection, receipt)
+            self.structure(connection, receipt, conversation)
         return receipt
 
     def fold_answer(self, text: str) -> Optional[dict]:
@@ -988,7 +1047,7 @@ class ProtocolChaosPlugin:
         parsed = getattr(result, "parsed", None)
         return parsed if isinstance(parsed, dict) else None
 
-    def structure(self, connection: Connection, receipt: dict) -> Optional[dict]:
+    def structure(self, connection: Connection, receipt: dict, conversation: str = "") -> Optional[dict]:
         """Folds the words just recorded into their Event's fields: the per-message part of
         organizing, grounded on those words (``accountId``). When someone else wrote in between,
         it reads again once and keeps whatever they changed."""
@@ -1008,7 +1067,7 @@ class ProtocolChaosPlugin:
                 if not isinstance(event, dict) or account is None:
                     return None
                 if answer is None:
-                    text, clipped = fold_input(result, account)
+                    text, clipped = fold_input(result, account, conversation)
                     answer = self.fold_answer(text)
                     base = event
                 else:

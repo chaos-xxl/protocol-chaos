@@ -14,8 +14,9 @@ repository never holds up a reply:
   whether your message changes one of your matters or starts one, and which. If so, the
   plugin records your words with `event_note`, copied from the message itself, so they are
   stored verbatim. Then it folds them into that matter: its goal, constraints, plan,
-  progress, state and the people and places involved, grounded on the words just recorded.
-  The next turn, and every other assistant on your server, sees the change.
+  progress, state and the people and places involved, grounded on the words just recorded and
+  read with the last few messages of the conversation, so that "let's take the second option"
+  is understood. The next turn, and every other assistant on your server, sees the change.
 - **Once a day.** A bundled skill, `protocol-chaos:organizer`, does the rest: it links parts
   to the matters they belong to, merges duplicates, and keeps records of the people and
   places you mention. Turn it on with `/blueprint protocol-chaos:organizer`.
@@ -32,7 +33,8 @@ as it would without the plugin. The plugin logs ids and counts, never what you s
 - **To the model provider Hermes already uses**, only for recording, through Hermes's own
   auxiliary-model route: your message, up to 600 characters of the assistant's previous reply,
   and the titles and states of your matters (up to about 6,000 characters). When it records,
-  also the matter it records on: its current fields and its latest words.
+  also the matter it records on (its current fields and its latest words) and the last few
+  messages of the conversation with the assistant's reply (up to about 6,000 characters).
 - Nothing else. No telemetry, no other network calls, no files read outside the plugin's own
   directory. One short-lived background thread per message it considers recording: one model
   call to decide, and one more when it records.
@@ -67,7 +69,7 @@ Hermes asks for two values and keeps them with your other credentials:
 Restart Hermes (and the gateway, if one runs). The log then shows one line:
 
 ```text
-protocol-chaos 0.2.1: overview in system prompt, recording background, structure auto
+protocol-chaos 0.2.2: overview in system prompt, recording background, structure auto
 ```
 
 `overview in first turn` on a Hermes without system prompt sections; `recording model` where
