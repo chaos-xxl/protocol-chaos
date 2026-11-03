@@ -7,7 +7,8 @@ particular Events by id, and the words being recorded. It never receives the mes
 themselves.
 
 - When a session starts, the directory of open Events (titles, states, parts, progress) goes
-  into the system prompt, so the model knows what the user has going on.
+  into the system prompt, so the model knows what the user has going on. Scheduled jobs get
+  none.
 - ``pre_llm_call``: the message is compared with the directory's titles on this machine. For
   the few Events it plainly names, their goal, constraint, plan, progress and latest words are
   read by id and added to the turn, with their ids.
@@ -24,7 +25,8 @@ themselves.
   blueprint, ``/blueprint protocol-chaos:organizer``.
 
 Everything fails open: on any error the turn goes on exactly as it would without the plugin.
-Logs carry ids and counts, never what the user said.
+Logs carry ids, counts, times and token counts, never what the user said: each turn logs how long
+the plugin took before the model answered, and each model call its time and tokens.
 
 Settings: ``PROTOCOL_CHAOS_URL`` (the server's MCP endpoint) and ``PROTOCOL_CHAOS_TOKEN`` (the
 bearer token the server issued for this Hermes), read through Hermes's secret scope; and,
@@ -52,7 +54,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("protocol_chaos")
 
-PLUGIN_VERSION = "0.2.2"
+PLUGIN_VERSION = "0.3.0"
 URL_SECRET = "PROTOCOL_CHAOS_URL"
 TOKEN_SECRET = "PROTOCOL_CHAOS_TOKEN"
 READ_TIMEOUT = 6.0
@@ -75,6 +77,8 @@ CAPTURE_LIST_CHARS = 6000
 STRUCTURE_WORDS = 6
 FACT_LIMIT = 4000
 MAX_NEW_REFS = 5
+# The structure update also sees where the Event sits: its parents and its open parts.
+STRUCTURE_PARTS = 8
 # The conversation the structure update reads to understand the new words ("the second option"):
 # the messages before them, newest kept first when cutting, and the assistant's reply to them.
 CONTEXT_MESSAGES = 6
@@ -110,7 +114,8 @@ OVERVIEW_MARKER = "Protocol Chaos · the user's matters"
 SHOWN_ID = re.compile(r"\[id:([^\]\s]+)\]")
 OPEN_STATES = ("emerging", "active", "waiting", "dormant")
 WRITE_TOOLS = ("event_note", "event_record_expression")
-# Turns that are not the user talking: scheduled jobs (the organizer among them).
+# Turns that are not the user talking: scheduled jobs (the organizer among them). They get no
+# overview and no context, and nothing of theirs is recorded.
 MACHINE_PLATFORMS = ("cron", "scheduler", "schedule")
 
 
@@ -159,6 +164,23 @@ class ToolError(RuntimeError):
 def why(error: BaseException) -> str:
     """What went wrong, for the log: an error code or an exception's type, never content."""
     return error.code if isinstance(error, ToolError) else type(error).__name__
+
+
+def usage_text(result: Any) -> str:
+    """What a model call cost, for the log: the model and its token counts, never content."""
+    usage = getattr(result, "usage", None)
+    model = str(getattr(result, "model", "") or "")
+    parts = []
+    if usage is not None:
+        counts = [(getattr(usage, name, 0) or 0) for name in ("input_tokens", "output_tokens", "cache_read_tokens")]
+        if all(isinstance(count, int) for count in counts):
+            parts.append(f"{counts[0]} in, {counts[1]} out" + (f", {counts[2]} cached" if counts[2] else ""))
+        cost = getattr(usage, "cost_usd", None)
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            parts.append(f"${cost:.4f}")
+    if not parts:
+        parts.append("tokens unknown")
+    return ", ".join(parts) + (f", {clip(model, 60)}" if model else "")
 
 
 class Repository:
@@ -668,11 +690,16 @@ CAPTURE_INSTRUCTIONS = (
     "message is: 'how many calories is this? way too much, I'm trying to lose weight' is a limit on the "
     "weight-loss matter, 'friends are coming to stay and I want to get ready' starts a new one, 'three days of "
     "healthy eating so far' is progress. The listed matters show their parts indented under them: put the words "
-    "on the most specific matter they are about and give its ref exactly as listed (such as m12). Otherwise give "
-    "a title for a new matter, in the user's language, at most 30 characters, that names it on its own: what, and "
-    "when or which where that tells it apart ('2027 年春天葡萄牙行', not '葡萄牙'); when it belongs under a listed "
-    "matter, give that matter's ref as parentRef. words: the part of the message about this matter, copied "
-    "character for character; usually the whole message. Answer in JSON."
+    "on the most specific matter they are about and give its ref exactly as listed (such as m12). An episode with "
+    "its own start and end inside a long-lived matter (a breakdown and its repair, one trip, one visit, one "
+    "application) is a matter of its own, while progress on the long-lived matter's own plan is not: when the "
+    "words are about such an episode and no listed part is, start a new matter for the episode under the "
+    "long-lived one instead of putting the words on the long-lived one. For a new matter, give a title in the "
+    "user's language, at most 30 characters, that names it on its own: what, and when or which wherever a similar "
+    "one could follow, with the month or season for an episode ('2027 年春天葡萄牙行', '2026 年 10 月路由器断网排查', "
+    "not '葡萄牙' or '路由器故障'), counted from today; when it belongs under a listed matter, give that matter's ref "
+    "as parentRef. words: the part of the message about this matter, copied character for character; usually the "
+    "whole message. Answer in JSON."
 )
 
 STRUCTURE_SCHEMA = {
@@ -707,9 +734,15 @@ STRUCTURE_INSTRUCTIONS = (
     "involves: people, places or things the words name that the matter does not list yet, each a short "
     "description in the user's terms such as 'my wife' or 'Lisbon'; never the user themself. "
     "title: only when the matter has none: what it is, and when or which where that tells it apart. "
+    "A long-lived matter holds only what is true of it as a whole. When the matter has parts, or the new words "
+    "are about one episode of it (one breakdown, one trip, one visit), leave out of it whatever holds only for "
+    "that episode: the episode's own progress, a passing condition such as being away from home for now, a "
+    "temporary setting. Those belong on the episode, so they are not changes to this matter. "
     "Write relative times as concrete dates, counted from the day the new words were said. Never write 'the "
-    "user'; write the facts themselves. Words marked as an assistant's note are an inference: fold them only as "
-    "an inference with its basis, and never over the user's own words. Older details are things the user said "
+    "user'; write the facts themselves. Words marked as a note by an assistant are that assistant's own sentence: "
+    "either a record of what it did or found, which you fold as fact, naming the basis where it helps "
+    "('（依据：kiro 的执行记录）'), or an inference, which the note marks as one ('推测：…') and you keep marked as one; "
+    "never write either over the user's own words. Older details are things the user said "
     "before: when you write the aspect they belong to, fold in what still holds. The conversation around the new "
     "words is context: use it to understand what they refer to, such as 'the second option' or 'that date', and "
     "write only what the user said or accepted; a suggestion of the assistant's that the user did not take up is "
@@ -717,9 +750,22 @@ STRUCTURE_INSTRUCTIONS = (
 )
 
 
-def fold_input(result: dict, account: dict, conversation: str = "") -> tuple:
+def note_of(account: dict) -> str:
+    """How the structure update marks words that are not the user's own, and whose they are."""
+    source = account.get("source")
+    if source == "user":
+        return ""
+    actor = account.get("actor") if isinstance(account.get("actor"), dict) else {}
+    name = clip(actor.get("id") or "", 40)
+    if source == "authorized_external":
+        return f" (relayed{' by ' + name if name else ''} from another application)"
+    return f" (a note by {name})" if name else " (an assistant's note)"
+
+
+def fold_input(result: dict, account: dict, conversation: str = "", entries: Any = None) -> tuple:
     """The text the structure update shows the model, and the facts too long to rewrite.
-    ``conversation``: the recent messages and the assistant's reply (``recent_conversation``)."""
+    ``conversation``: the recent messages and the assistant's reply (``recent_conversation``).
+    ``entries``: the directory, to show the larger matters the Event belongs to and its open parts."""
     event = result.get("event") or {}
     names = {e.get("id"): e.get("name") for e in result.get("entities") or [] if isinstance(e, dict)}
     facts = event.get("facts") or {}
@@ -738,6 +784,17 @@ def fold_input(result: dict, account: dict, conversation: str = "") -> tuple:
             lines.append(f"{key}: {facts.get(key) or '(none)'}")
     involves = [r.get("criteria") or names.get(r.get("ref")) or "" for r in event.get("refs") or [] if isinstance(r, dict)]
     lines.append("involves: " + ("; ".join(item for item in involves if item) or "(none)"))
+    if entries:
+        listed = [entry for entry in entries if isinstance(entry, dict) and entry.get("id")]
+        by_id = {entry["id"]: entry for entry in listed}
+        for parent in event.get("parents") or []:
+            title = (by_id.get(parent) or {}).get("title")
+            if title:
+                lines.append(f"part of: {clip(title, 80)}")
+        parts = [entry for entry in children_of(listed).get(event.get("id"), []) if entry.get("state") in OPEN_STATES]
+        if parts:
+            lines.append("parts: " + "; ".join(clip(entry.get("title") or "(untitled)", 60)
+                                               for entry in parts[:STRUCTURE_PARTS]))
     legacy = (event.get("metadata") or {}).get(LEGACY_KEY)
     if legacy:
         lines.append("older details: " + clip(json.dumps(legacy, ensure_ascii=False), 1200))
@@ -747,12 +804,10 @@ def fold_input(result: dict, account: dict, conversation: str = "") -> tuple:
     if earlier:
         lines += ["", "Earlier words, oldest first:"]
         for item in earlier:
-            note = "" if item.get("source") == "user" else " (an assistant's note)"
-            lines.append(f"- {str(item.get('createdAt') or '')[:10]}{note}: {clip(item.get('text'), 300)}")
+            lines.append(f"- {str(item.get('createdAt') or '')[:10]}{note_of(item)}: {clip(item.get('text'), 300)}")
     if conversation:
         lines += ["", conversation]
-    note = "" if account.get("source") == "user" else " (an assistant's note)"
-    lines += ["", f"The new words{note}:", str(account.get("text") or "")]
+    lines += ["", f"The new words{note_of(account)}:", str(account.get("text") or "")]
     return "\n".join(lines), clipped
 
 
@@ -887,14 +942,23 @@ class ProtocolChaosPlugin:
         return "Do not search or re-read the repository for what is shown here."
 
     def prompt_section(self, session_info: Any = None) -> str:
-        """The system prompt section of a new session: the overview, built once and cache-safe."""
+        """The system prompt section of a new session: the overview, built once and cache-safe.
+        A scheduled job gets none: its prompt is not the user talking, and a job that needs the
+        matters (the organizer) reads them with the repository's tools. Hermes tells a section the
+        session's platform but not whether it is a subagent's, so subagents still get it."""
+        info = session_info if hasattr(session_info, "get") else {}
+        if str(info.get("platform") or "") in MACHINE_PLATFORMS:
+            log.info("protocol-chaos: no overview for a scheduled job")
+            return ""
         try:
             connection = self.connection()
             if connection is None:
                 return ""
             note = self.recording_note()
             overview = overview_text(connection.directory(max_age=0), PROMPT_SECTION_CHARS - len(note) - 2)
-            return f"{overview}\n\n{note}"
+            text = f"{overview}\n\n{note}"
+            log.info("protocol-chaos: overview of %d characters in the system prompt", len(text))
+            return text
         except Exception as error:  # fail open: no section
             log.warning("protocol-chaos: overview skipped (%s)", why(error))
             return ""
@@ -910,15 +974,20 @@ class ProtocolChaosPlugin:
         connection = self.connection()
         if connection is None:
             return None
+        # What this hook adds to the wait before the model answers: logged on every turn.
+        started = time.monotonic()
         try:
             entries = connection.directory()
         except Exception as error:
-            log.warning("protocol-chaos: directory unavailable (%s)", why(error))
+            log.warning("protocol-chaos: directory unavailable after %.2fs (%s)", time.monotonic() - started, why(error))
             return None
         parts = []
+        related = 0
+        overview_added = False
         if (not self.overview_in_prompt and self.settings.get("overview", "auto") in ("auto", "turn")
                 and not state["overview_done"] and not history_has(conversation_history, OVERVIEW_MARKER)):
             parts.append(overview_text(entries, TURN_OVERVIEW_CHARS))
+            overview_added = True
         state["overview_done"] = True
         text = message_text(user_message)
         if text.strip() and not text.lstrip().startswith("/"):
@@ -941,7 +1010,9 @@ class ProtocolChaosPlugin:
                 if blocks:
                     parts.append("Matters this message may be about (picked by the client from their titles):\n"
                                  + "\n".join(blocks))
-                    log.info("protocol-chaos: %d related matter(s)", len(blocks))
+                    related = len(blocks)
+        log.info("protocol-chaos: turn context in %.2fs (%d related matter(s)%s)", time.monotonic() - started, related,
+                 ", and the overview" if overview_added else "")
         if not parts:
             return None
         note = self.recording_note()
@@ -977,10 +1048,12 @@ class ProtocolChaosPlugin:
 
     def decide(self, text: str, listed: str, before: str) -> Optional[dict]:
         context = f"What the assistant had just said (context only):\n{before[:600]}\n\n" if before else ""
+        # The date, so a new matter's title can say when ("2026 年 10 月…").
+        today = time.strftime("%Y-%m-%d")
         arguments: dict = {
             "instructions": CAPTURE_INSTRUCTIONS,
-            "input": [{"type": "text", "text": f"{context}The user's matters in the repository:\n{listed}\n\n"
-                                               f"The user's message:\n{text}"}],
+            "input": [{"type": "text", "text": f"Today is {today}.\n\n{context}The user's matters in the repository:\n"
+                                               f"{listed}\n\nThe user's message:\n{text}"}],
             "json_schema": CAPTURE_SCHEMA,
             "purpose": "protocol-chaos.capture",
             "temperature": 0.0,
@@ -989,8 +1062,12 @@ class ProtocolChaosPlugin:
         }
         if self.capture_task and accepts(self.llm.complete_structured, "task"):
             arguments["task"] = self.capture_task
+        started = time.monotonic()
         result = self.llm.complete_structured(**arguments)
         parsed = getattr(result, "parsed", None)
+        decided = "record" if isinstance(parsed, dict) and parsed.get("record") is True else "skip"
+        log.info("protocol-chaos: recording decided in %.1fs, %s (%s)", time.monotonic() - started, decided,
+                 usage_text(result))
         return parsed if isinstance(parsed, dict) else None
 
     def capture(self, text: str, before: str = "", conversation: str = "") -> Optional[dict]:
@@ -998,7 +1075,8 @@ class ProtocolChaosPlugin:
             connection = self.connection()
             if connection is None:
                 return None
-            listed, refs = candidate_list(text, connection.directory())
+            entries = connection.directory()
+            listed, refs = candidate_list(text, entries)
             decision = self.decide(text, listed, before)
             if not decision or decision.get("record") is not True:
                 return None
@@ -1028,7 +1106,7 @@ class ProtocolChaosPlugin:
             log.warning("protocol-chaos: recording skipped (%s)", why(error))
             return None
         if self.structure_mode == "auto":
-            self.structure(connection, receipt, conversation)
+            self.structure(connection, receipt, conversation, entries)
         return receipt
 
     def fold_answer(self, text: str) -> Optional[dict]:
@@ -1043,14 +1121,18 @@ class ProtocolChaosPlugin:
         }
         if self.capture_task and accepts(self.llm.complete_structured, "task"):
             arguments["task"] = self.capture_task
+        started = time.monotonic()
         result = self.llm.complete_structured(**arguments)
+        log.info("protocol-chaos: structure answered in %.1fs (%s)", time.monotonic() - started, usage_text(result))
         parsed = getattr(result, "parsed", None)
         return parsed if isinstance(parsed, dict) else None
 
-    def structure(self, connection: Connection, receipt: dict, conversation: str = "") -> Optional[dict]:
+    def structure(self, connection: Connection, receipt: dict, conversation: str = "",
+                  entries: Any = None) -> Optional[dict]:
         """Folds the words just recorded into their Event's fields: the per-message part of
         organizing, grounded on those words (``accountId``). When someone else wrote in between,
-        it reads again once and keeps whatever they changed."""
+        it reads again once and keeps whatever they changed. ``entries``: the directory read before
+        recording, to show where the Event sits."""
         event_id, account_id = receipt.get("eventId"), receipt.get("accountId")
         if not event_id or not account_id:
             return None
@@ -1067,7 +1149,7 @@ class ProtocolChaosPlugin:
                 if not isinstance(event, dict) or account is None:
                     return None
                 if answer is None:
-                    text, clipped = fold_input(result, account, conversation)
+                    text, clipped = fold_input(result, account, conversation, entries)
                     answer = self.fold_answer(text)
                     base = event
                 else:

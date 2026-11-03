@@ -342,6 +342,48 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(doc["event"]["parents"], [])
         self.assertEqual(doc["event"]["title"], "2026 年秋天学烘焙")
 
+    def test_scheduled_jobs_get_no_overview_in_the_system_prompt(self):
+        host, plugin = self.loaded()
+        content, _ = host.sections["protocol-chaos.overview"]
+        # Hermes hands a section a read-only mapping of the session's details.
+        self.assertEqual(content(types.MappingProxyType({"platform": "cron", "session_id": "j1"})), "")
+        self.assertIn(self.plugin.OVERVIEW_MARKER, content(types.MappingProxyType({"platform": "discord"})))
+        self.assertIn(self.plugin.OVERVIEW_MARKER, content(None))
+
+    def test_the_recording_decision_knows_today(self):
+        host, plugin = self.loaded()
+        seen = {}
+
+        def decide(input):
+            seen["text"] = input[0]["text"]
+            return {"record": False}
+
+        host.llm.decision = decide
+        self.assertIsNone(plugin.capture("家里的路由器又断网了"))
+        self.assertTrue(seen["text"].startswith(f"Today is {time.strftime('%Y-%m-%d')}.\n"))
+        # One episode inside a long-lived matter gets a part of its own, titled with when.
+        self.assertIn("An episode with its own start and end", self.plugin.CAPTURE_INSTRUCTIONS)
+
+    def test_the_structure_update_sees_the_larger_matter_and_the_parts(self):
+        host, plugin = self.loaded()
+        network = self.note("Keep the home network healthy.", title="家里的网络和机柜")["eventId"]
+        self.note("The NAS needs a new disk.", title="2026 年 11 月 NAS 换硬盘", parentEventId=network)
+        seen = []
+
+        def fold(input):
+            seen.append(input[0]["text"])
+            return {"change": False}
+
+        host.llm.structure = fold
+        host.llm.decision = self.pick("家里的网络和机柜")
+        plugin.capture("网络这块我想以后都走万兆")
+        host.llm.decision = self.pick("2026 年 11 月 NAS 换硬盘")
+        plugin.capture("硬盘买了两块 16T 的")
+        self.assertIn("parts: 2026 年 11 月 NAS 换硬盘", seen[0])
+        self.assertNotIn("part of:", seen[0])
+        self.assertIn("part of: 家里的网络和机柜", seen[1])
+        self.assertIn("leave out of it whatever holds only for that episode", self.plugin.STRUCTURE_INSTRUCTIONS)
+
     def test_scheduled_jobs_subagents_and_commands_get_nothing(self):
         host, plugin = self.loaded()
         self.assertIsNone(plugin.pre_llm_call(session_id="c1", user_message="葡萄牙", platform="cron"))
@@ -535,6 +577,10 @@ class PluginTest(unittest.TestCase):
             logger.removeHandler(handler)
         self.assertTrue(records)
         self.assertTrue(any(line.startswith("protocol-chaos: structured ") for line in records))
+        # How long the turn waited, and what each model call took: times and counts only.
+        self.assertTrue(any(line.startswith("protocol-chaos: turn context in ") for line in records))
+        self.assertTrue(any(line.startswith("protocol-chaos: recording decided in ") for line in records))
+        self.assertTrue(any(line.startswith("protocol-chaos: structure answered in ") for line in records))
         self.assertTrue(all("qq-5512" not in line and "装修" not in line and "十五万" not in line for line in records))
 
     def test_settings_and_the_capability_probe(self):
@@ -666,6 +712,24 @@ class HelperTest(unittest.TestCase):
         # When the history stops before the current message, nothing of it is cut off.
         self.assertIn("user: earlier", recent([{"role": "user", "content": "earlier"}], None, "now"))
         self.assertEqual(recent([], None, "now"), "")
+
+    def test_notes_say_whose_they_are(self):
+        note_of = self.plugin.note_of
+        self.assertEqual(note_of({"source": "user", "actor": {"kind": "agent", "id": "kiro"}}), "")
+        self.assertEqual(note_of({"source": "agent_response", "actor": {"kind": "agent", "id": "kiro"}}),
+                         " (a note by kiro)")
+        self.assertEqual(note_of({"source": "agent_response"}), " (an assistant's note)")
+        self.assertEqual(note_of({"source": "authorized_external", "actor": {"kind": "agent", "id": "muse"}}),
+                         " (relayed by muse from another application)")
+
+    def test_usage_text(self):
+        usage_text = self.plugin.usage_text
+        usage = types.SimpleNamespace(input_tokens=1200, output_tokens=40, cache_read_tokens=0, cost_usd=0.00031)
+        self.assertEqual(usage_text(types.SimpleNamespace(usage=usage, model="small-model")),
+                         "1200 in, 40 out, $0.0003, small-model")
+        cached = types.SimpleNamespace(input_tokens=10, output_tokens=2, cache_read_tokens=8, cost_usd=None)
+        self.assertEqual(usage_text(types.SimpleNamespace(usage=cached, model="")), "10 in, 2 out, 8 cached")
+        self.assertEqual(usage_text(object()), "tokens unknown")
 
     def test_verbatim_words(self):
         v = self.plugin.verbatim_words

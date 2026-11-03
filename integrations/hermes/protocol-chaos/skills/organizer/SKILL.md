@@ -1,7 +1,7 @@
 ---
 name: organizer
 description: Fold the words recorded in Protocol Chaos into structure (draft 0.2 servers)
-version: 0.2.2
+version: 0.3.0
 metadata:
   hermes:
     tags: [protocol-chaos, organizer, scheduled]
@@ -63,7 +63,14 @@ server `protocol_chaos`, with the same token as the plugin.
      rewrite the broad one's facts without what now lives in the part: it keeps what holds
      for all its parts.
    - When new words landed on a broad Event but are about one of its parts, fold them into
-     the part (as with duplicates, below), not the broad one.
+     the part (as with duplicates, below), not the broad one. When they are about one episode
+     that has no part yet (a breakdown, a trip), start the part as above.
+   - Then look back at the broad Event. If its fields were already written from those words
+     (the plugin does that as soon as it records), anything there that holds only for the
+     part now lives in the part: rewrite those fields without it, grounded on the same word
+     (`accountId`, on the broad Event). `event_get_revisions` on the broad Event shows each
+     field's `before` and `after`: where the words replaced something that still holds, such
+     as the progress of the whole, put that back.
 6. **Duplicates.** When an Event recorded today is the same matter as an existing one, fold
    its words into the existing one: `event_record_expression` on that one with the words as
    `text`, verbatim, and no `accountId`, since the Account belongs to the other Event. Then
@@ -98,16 +105,28 @@ server `protocol_chaos`, with the same token as the plugin.
   Leave it as said when it depends on something else ("before I turn 40").
 - **Never "the user".** The repository is theirs; do not write them into facts or refs.
 - **Progress is not a fact.** Where the Event stands goes in `progress`.
+- **The whole and its episodes.** A long-lived Event (a home network, a job search, travel
+  plans) holds only what is true of it as a whole. An episode inside it (one breakdown, one
+  trip, one interview) is a part with fields of its own: its progress, its passing conditions
+  ("away from home for now") and its temporary settings go there, never into the long-lived
+  Event.
 - **State.** `active` while the user is pursuing it, `waiting` while it waits on something,
   `dormant` while it is set aside, `done` when it is achieved, `cancelled` when it is given
   up or folded into another. `emerging` is where a new Event starts.
 - **Title.** A name in the user's language that identifies the Event on its own: what it
   is, plus when or which wherever a similar Event could follow ("2027 年春天葡萄牙行（和朋友）",
-  "2026 年秋天搬家"), never a bare topic ("葡萄牙", "搬家"). Give one to an untitled Event,
-  rename one that would be ambiguous next to its siblings, and keep a good existing one.
-- **Newer words win.** When new words contradict a fact, rewrite the fact. Words with
-  `source: "agent_response"` are an assistant's inference: fold them only as an inference
-  with its basis ("推测：…（依据：…）"), and never over the user's own words.
+  "2026 年秋天搬家"), never a bare topic ("葡萄牙", "搬家"). An episode says when: "2026 年
+  10 月 OpenClash 网络故障排查". Give a title to an untitled Event, rename one that would be
+  ambiguous next to its siblings or that carries a relative time ("本周三周五…", "下个月…",
+  counted from the word that set it), and keep a good existing one.
+- **Newer words win.** When new words contradict a fact, rewrite the fact.
+- **An assistant's own sentence.** Words with `source: "agent_response"` are written by the
+  assistant in their `actor`, and are one of two things. A record of what it did or found
+  (a pull request it opened, a check it ran, what a search turned up) is a fact: fold it as
+  one, naming the basis where it helps ("（依据：Kiro 的执行记录）"), and do not mark it
+  "推测". An inference is marked as one in the words ("推测：…"): keep it marked as an
+  inference, with its basis, and only that part. Never write either over the user's own
+  words.
 - **Not every word is structure.** Words that change no field add nothing: small talk,
   instructions to an assistant, questions, one-off occurrences such as a meal or a workout,
   and an assistant's own calculations. A feeling, news or progress said in the same message

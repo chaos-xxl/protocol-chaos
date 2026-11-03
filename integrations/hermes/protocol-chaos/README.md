@@ -22,7 +22,15 @@ repository never holds up a reply:
   places you mention. Turn it on with `/blueprint protocol-chaos:organizer`.
 
 Everything fails open: if the server is unreachable or answers with an error, the turn goes on
-as it would without the plugin. The plugin logs ids and counts, never what you said.
+as it would without the plugin. The plugin logs ids, counts, times and token counts, never what
+you said: one line per turn with how long it took before the model answered
+(`turn context in 0.31s`), and one per model call with its time and tokens (`recording decided
+in 1.2s, skip (1830 in, 12 out, …)`, `structure answered in …`).
+
+When a message is about one episode of a long-lived matter, such as a breakdown of the home
+network or one trip among your travel plans, the plugin records it on a part of its own,
+titled with when it happened, so that what holds only for that episode stays out of the
+long-lived matter.
 
 ## What leaves this machine
 
@@ -32,9 +40,10 @@ as it would without the plugin. The plugin logs ids and counts, never what you s
   [protocol](https://github.com/chaos-xxl/protocol-chaos/blob/main/PROTOCOL.md)).
 - **To the model provider Hermes already uses**, only for recording, through Hermes's own
   auxiliary-model route: your message, up to 600 characters of the assistant's previous reply,
-  and the titles and states of your matters (up to about 6,000 characters). When it records,
-  also the matter it records on (its current fields and its latest words) and the last few
-  messages of the conversation with the assistant's reply (up to about 6,000 characters).
+  and the titles and states of your matters (up to about 6,000 characters), with today's date.
+  When it records, also the matter it records on (its current fields, its latest words, and the
+  titles of the larger matters it belongs to and of its open parts) and the last few messages of
+  the conversation with the assistant's reply (up to about 6,000 characters).
 - Nothing else. No telemetry, no other network calls, no files read outside the plugin's own
   directory. One short-lived background thread per message it considers recording: one model
   call to decide, and one more when it records.
@@ -69,7 +78,7 @@ Hermes asks for two values and keeps them with your other credentials:
 Restart Hermes (and the gateway, if one runs). The log then shows one line:
 
 ```text
-protocol-chaos 0.2.2: overview in system prompt, recording background, structure auto
+protocol-chaos 0.3.0: overview in system prompt, recording background, structure auto
 ```
 
 `overview in first turn` on a Hermes without system prompt sections; `recording model` where
@@ -124,7 +133,10 @@ The job reads the words with `event_words_since`, writes with the structured too
 checkpoint in `~/.hermes/protocol-chaos/organizer-checkpoint`, and reports to the chat it was
 created from: a few lines on what it organized and what needs your decision, or nothing
 (`[SILENT]`) when there was nothing to do. Scheduled turns and subagents get no added context,
-and nothing of theirs is recorded.
+and nothing of theirs is recorded. Scheduled jobs also get no overview in their system prompt:
+a job that needs your matters reads them with the repository's tools, as the organizer does.
+Hermes does not tell the plugin when it builds a subagent's system prompt, so subagents still
+get the overview there.
 
 ## Uninstall
 
