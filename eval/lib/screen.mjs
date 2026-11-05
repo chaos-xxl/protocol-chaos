@@ -23,17 +23,19 @@ const CASE = 'd1-moving-budget~1';
 
 /** A model's settings from a gateway description and the model's name there. */
 export function modelFromGateway(gateway, name) {
-  const anthropic = gateway.anthropicPattern ? new RegExp(gateway.anthropicPattern, 'i').test(name) : false;
+  const matches = (pattern) => (pattern ? new RegExp(pattern, 'i').test(name) : false);
+  const anthropic = matches(gateway.anthropicPattern);
+  const api = gateway.models?.[name]?.api ?? (anthropic ? 'anthropic' : matches(gateway.responsesPattern) ? 'responses' : 'openai');
   return {
     id: name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, ''),
     model: name,
-    api: anthropic ? 'anthropic' : 'openai',
-    endpoint: anthropic ? gateway.anthropicEndpoint : gateway.openaiEndpoint,
+    api,
+    endpoint: { anthropic: gateway.anthropicEndpoint, responses: gateway.responsesEndpoint, openai: gateway.openaiEndpoint }[api],
     apiKeyEnv: gateway.apiKeyEnv,
     ...(gateway.conversationHeader ? { conversationHeader: gateway.conversationHeader } : {}),
     ...(gateway.requestIdHeader ? { requestIdHeader: gateway.requestIdHeader } : {}),
     body: { ...(gateway.body ?? {}), ...(gateway.models?.[name]?.body ?? {}) },
-    passback: gateway.models?.[name]?.passback ?? (anthropic ? [] : gateway.passback ?? []),
+    passback: gateway.models?.[name]?.passback ?? (api === 'openai' ? gateway.passback ?? [] : []),
     concurrency: gateway.concurrency ?? 4,
     timeoutMs: gateway.timeoutMs ?? 180_000,
     maxRetries: gateway.maxRetries ?? 3,

@@ -1,6 +1,7 @@
 // The model behind assistants A, B and C, reached through an OpenAI-compatible Chat
-// Completions endpoint with tool calling, or through an Anthropic Messages endpoint (some
-// gateways serve Claude only that way). Each model in the run's list
+// Completions endpoint with tool calling, through an Anthropic Messages endpoint (some
+// gateways serve Claude only that way), or through the OpenAI Responses API (some reasoning
+// models take function tools only there). Each model in the run's list
 // (eval/models.example.json) names its endpoint, the environment variable holding its key,
 // the model name, extra request fields, which fields of an assistant message must be sent
 // back on later requests, and optional per-request headers a gateway uses (a conversation
@@ -43,7 +44,7 @@ export function checkModel(model) {
     if (url.protocol === 'http:' && !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)) problems.push('plain http only on a loopback address');
   }
   if (typeof model?.model !== 'string' || !model.model) problems.push('model must name the model');
-  if (model?.api !== undefined && !['openai', 'anthropic'].includes(model.api)) problems.push('api must be "openai" or "anthropic"');
+  if (model?.api !== undefined && !['openai', 'anthropic', 'responses'].includes(model.api)) problems.push('api must be "openai", "anthropic" or "responses"');
   if (model?.apiKeyEnv !== undefined && !/^[A-Z_][A-Z0-9_]*$/.test(model.apiKeyEnv)) problems.push('apiKeyEnv must be an environment variable name');
   for (const field of ['conversationHeader', 'requestIdHeader']) {
     if (model?.[field] !== undefined && !/^[A-Za-z0-9-]+$/.test(model[field])) problems.push(`${field} must be a header name`);
@@ -162,7 +163,67 @@ const anthropic = {
   },
 };
 
-const WIRES = { openai, anthropic };
+// ---- OpenAI Responses ----
+// Some reasoning models take function tools only through the Responses API. Nothing is stored
+// on the server (store: false); the reasoning of earlier turns comes back as encrypted items,
+// and every output item is sent back as it came, so the model sees its own earlier turns.
+
+/** Chat Completions messages as Responses input items; the system prompt becomes the instructions. */
+export function toResponses(messages) {
+  const instructions = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n');
+  const input = [];
+  for (const m of messages) {
+    if (m.role === 'system') continue;
+    if (m.role === 'user') input.push({ role: 'user', content: [{ type: 'input_text', text: m.content }] });
+    else if (m.role === 'assistant') {
+      if (Array.isArray(m.responses_output)) {
+        input.push(...m.responses_output);
+        continue;
+      }
+      if (typeof m.content === 'string' && m.content) input.push({ role: 'assistant', content: [{ type: 'output_text', text: m.content }] });
+      for (const call of m.tool_calls ?? []) input.push({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments ?? '{}' });
+    } else if (m.role === 'tool') {
+      input.push({ type: 'function_call_output', call_id: m.tool_call_id, output: m.content });
+    }
+  }
+  return { instructions: instructions || undefined, input };
+}
+
+const responses = {
+  body(model, messages, tools) {
+    const { instructions, input } = toResponses(messages);
+    return {
+      model: model.model,
+      ...(instructions ? { instructions } : {}),
+      input,
+      ...(tools.length ? { tools: tools.map((t) => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters ?? { type: 'object' }, strict: false })) } : {}),
+      store: false,
+      include: ['reasoning.encrypted_content'],
+      ...(model.body ?? {}),
+    };
+  },
+  parse(model, data) {
+    if (!Array.isArray(data?.output)) return undefined;
+    const text = data.output.filter((item) => item.type === 'message')
+      .flatMap((item) => (item.content ?? []).filter((c) => c.type === 'output_text').map((c) => c.text)).join('');
+    const calls = data.output.filter((item) => item.type === 'function_call')
+      .map((item) => ({ id: item.call_id, type: 'function', function: { name: item.name, arguments: item.arguments ?? '{}' } }));
+    const message = { role: 'assistant', content: text || null, responses_output: data.output };
+    if (calls.length) message.tool_calls = calls;
+    const cut = data.status === 'incomplete' && data.incomplete_details?.reason === 'max_output_tokens';
+    return {
+      message,
+      finishReason: cut ? 'length' : calls.length ? 'tool_calls' : 'stop',
+      usage: usageOf(data.usage),
+      reasoningChars: null,
+      model: data.model ?? null,
+      id: data.id ?? null,
+      fingerprint: null,
+    };
+  },
+};
+
+const WIRES = { openai, anthropic, responses };
 
 /**
  * A client for one model: complete(messages, tools, {conversationId}) resolves with

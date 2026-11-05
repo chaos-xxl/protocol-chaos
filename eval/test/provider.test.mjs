@@ -125,6 +125,35 @@ test('an Anthropic endpoint: system apart, tool results in user turns, tool use 
   assert.deepEqual(out.usage, { input: 1000, cached: 900, output: 30, reasoning: null });
 });
 
+test('a Responses endpoint: instructions apart, earlier output items sent back as they came, nothing stored', async () => {
+  const output = [
+    { type: 'reasoning', id: 'rs_1', encrypted_content: 'opaque', summary: [] },
+    { type: 'function_call', id: 'fc_1', call_id: 'call_9', name: 'memory', arguments: '{"action":"add","content":"x"}', status: 'completed' },
+  ];
+  queue = [{ status: 200, body: { id: 'resp_1', model: 'gpt-x', status: 'completed', output, usage: { input_tokens: 50, input_tokens_details: { cached_tokens: 20 }, output_tokens: 9, output_tokens_details: { reasoning_tokens: 6 } } } }];
+  const provider = createProvider(model({ api: 'responses', model: 'gpt-x' }), { env, sleep: noWait });
+  const tools = [{ type: 'function', function: { name: 'memory', description: '改记忆', parameters: { type: 'object', properties: { action: { type: 'string' } } } } }];
+  const first = await provider.complete([{ role: 'system', content: '你是助手 B。' }, { role: 'user', content: '记一下。' }], tools);
+  let { body } = seen.at(-1);
+  assert.equal(body.instructions, '你是助手 B。');
+  assert.deepEqual(body.input, [{ role: 'user', content: [{ type: 'input_text', text: '记一下。' }] }]);
+  assert.deepEqual(body.tools, [{ type: 'function', name: 'memory', description: '改记忆', parameters: tools[0].function.parameters, strict: false }]);
+  assert.equal(body.store, false);
+  assert.deepEqual(body.include, ['reasoning.encrypted_content']);
+  assert.equal(first.finishReason, 'tool_calls');
+  assert.deepEqual(first.message.tool_calls, [{ id: 'call_9', type: 'function', function: { name: 'memory', arguments: '{"action":"add","content":"x"}' } }]);
+  assert.deepEqual(first.usage, { input: 50, cached: 20, output: 9, reasoning: 6 });
+  queue = [{ status: 200, body: { id: 'resp_2', model: 'gpt-x', status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '记下了。' }] }], usage: { input_tokens: 80, output_tokens: 4 } } }];
+  const second = await provider.complete([
+    { role: 'system', content: '你是助手 B。' }, { role: 'user', content: '记一下。' }, first.message,
+    { role: 'tool', tool_call_id: 'call_9', content: '已新增一条。' },
+  ], tools);
+  ({ body } = seen.at(-1));
+  assert.deepEqual(body.input.slice(1), [...output, { type: 'function_call_output', call_id: 'call_9', output: '已新增一条。' }]);
+  assert.equal(second.message.content, '记下了。');
+  assert.equal(second.finishReason, 'stop');
+});
+
 test('model settings are checked, and a missing key stops before any request', () => {
   assert.throws(() => checkModel({ id: 'm', endpoint: 'http://example.com/v1', model: 'x' }), /loopback/);
   assert.throws(() => checkModel({ id: 'm', endpoint: 'https://user:pw@example.com/v1', model: 'x' }), /credentials/);
