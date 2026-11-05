@@ -1,7 +1,9 @@
 // Scoring by rules, not by a model. A probe's reply ends with a line "ANSWER: <value>"; the
 // value is parsed for the question's type and compared with the gold answer. Outcomes:
 // correct, stale (an earlier value of the timeline), wrong, unknown (the model says the store
-// does not hold it) and unparseable. Gold answer types are described in eval/README.md.
+// does not hold it) and unparseable. A wrong number or option that belongs to a similar
+// matter of the case (the answer's `confused` values) is marked detail "confused". Gold
+// answer types are described in eval/README.md.
 
 export const OUTCOMES = ['correct', 'stale', 'wrong', 'unknown', 'unparseable', 'failed'];
 const UNKNOWN = /^(unknown|未知|不知道|不清楚|不确定|没有记录|记录里没有|无记录|查不到|没查到)$/i;
@@ -221,7 +223,9 @@ export function score(answer, reply) {
     if (answer.type === 'unknown') return result('wrong', value, parsed.n, 'number');
     const outcome = sameNumber(parsed.n, Number(answer.value)) ? 'correct'
       : (answer.stale ?? []).some((s) => sameNumber(parsed.n, Number(s))) ? 'stale' : 'wrong';
-    return result(outcome, value, parsed.n, 'number', parsed.more ? { review: 'several numbers' } : {});
+    const extra = parsed.more ? { review: 'several numbers' } : {};
+    if (outcome === 'wrong' && (answer.confused ?? []).some((c) => sameNumber(parsed.n, Number(c)))) extra.detail = 'confused';
+    return result(outcome, value, parsed.n, 'number', extra);
   }
   if (type === 'date') {
     const parsed = parseDate(value, goldYear ?? 2026);
@@ -235,7 +239,7 @@ export function score(answer, reply) {
     if (!parsed) return result('unparseable', value, null, 'option:none');
     if (parsed.letter === null || answer.type === 'unknown' || !(parsed.letter in (answer.options ?? {}))) return result('wrong', value, parsed.letter, parsed.method);
     const outcome = parsed.letter === answer.value ? 'correct' : (answer.stale ?? []).includes(parsed.letter) ? 'stale' : 'wrong';
-    return result(outcome, value, parsed.letter, parsed.method);
+    return result(outcome, value, parsed.letter, parsed.method, outcome === 'wrong' && (answer.confused ?? []).includes(parsed.letter) ? { detail: 'confused' } : {});
   }
   if (type === 'multi') {
     const parsed = parseMulti(value);

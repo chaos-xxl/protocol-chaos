@@ -61,6 +61,12 @@ function checkAnswer(answer, where) {
       return String(Number(s));
     });
     check(!out.stale.includes(out.value), where, 'a stale value equals the answer');
+    out.confused = (answer.confused ?? []).map((s) => {
+      check(Number.isFinite(Number(s)), where, 'confused numbers must be numeric');
+      return String(Number(s));
+    });
+    check(!out.confused.includes(out.value), where, 'a confused value equals the answer');
+    if (!out.confused.length) delete out.confused;
   }
   if (answer.type === 'date') {
     out.value = answer.day !== undefined ? dayOf(answer.day, where) : answer.value;
@@ -73,6 +79,7 @@ function checkAnswer(answer, where) {
     check(answer.value in answer.options, where, 'the answer must be one of the option letters');
     out.stale = answer.stale ?? [];
     check(out.stale.every((l) => l in answer.options && l !== answer.value), where, 'stale options must be other option letters');
+    if (answer.confused !== undefined) check(answer.confused.every((l) => l in answer.options && l !== answer.value), where, 'confused options must be other option letters');
   }
   if (answer.type === 'multi') {
     check(Array.isArray(answer.value) && answer.value.every((l) => l in answer.options), where, 'a multi answer is a list of option letters');

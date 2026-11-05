@@ -1,0 +1,31 @@
+{
+  "id": "d5-grandma-needs-a-lift",
+  "category": "D5",
+  "author": "kiro",
+  "shape": "A long-lived matter sets standing conditions; a trip under it is planned later without repeating them, and the choice depends on them.",
+  "keywords": ["外婆", "{city}"],
+  "variants": [
+    { "city": "扬州", "a": "老城区一家民宿，在四楼，没有电梯，便宜一半", "b": "车站旁边的连锁酒店，有电梯", "aName": "老城区那家民宿", "bName": "车站旁边的连锁酒店", "gold": "B" },
+    { "city": "泉州", "a": "开元寺旁边的酒店，有电梯，贵一点", "b": "古城里的老宅民宿，住三楼，只有楼梯", "aName": "开元寺旁边的酒店", "bName": "古城里的老宅民宿", "gold": "A" }
+  ],
+  "seed": [
+    {
+      "key": "grandma",
+      "title": "2026 年陪外婆出门走走",
+      "state": "active",
+      "facts": { "goal": "2026 年陪外婆出门玩几次。", "constraint": "外婆膝盖不好：住的地方必须有电梯；每天走路不超过一万步。" },
+      "accounts": [{ "day": -60, "assistant": "C", "source": "user", "text": "今年想陪外婆出门走走。她膝盖不好，住的地方一定要有电梯，一天走路别超过一万步。" }],
+      "organizedBy": { "assistant": "C", "day": -60 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "下个月陪外婆去{city}住三天，算今年陪外婆出门的第一趟。" },
+    { "day": 3, "assistant": "B", "user": "{city}那趟我看了两家住处：一家是{a}；另一家是{b}。" }
+  ],
+  "probes": [
+    { "day": 5, "assistant": "C", "question": "陪外婆去{city}那趟，两家住处订哪家？",
+      "answer": { "type": "option", "value": "{gold}", "options": { "A": "{aName}", "B": "{bName}", "C": "两家都行" } } },
+    { "day": 5, "time": "21:00", "assistant": "A", "question": "去{city}那几天，每天最多安排走多少步？",
+      "answer": { "type": "number", "value": "10000", "unit": "步" } }
+  ]
+}

@@ -74,9 +74,9 @@ A template is a JSON file in `eval/templates/<split>/`. Its variants expand into
 - `keywords` are words that identify the case's matters. The background library must not contain them, so every probe has one right matter.
 - `seed` lists matters that exist before the first session, in the matter format below with `day` offsets instead of dates. A seed's `parent` names another seed's `key`.
 - Answer types:
-  - `number`: `value`, optional `unit`, `stale` (earlier values). Units, thousands separators, 万 and Chinese numerals (两万五) are understood.
+  - `number`: `value`, optional `unit`, `stale` (earlier values) and `confused` (values of a similar matter in the case, counted as wrong and marked). Units, thousands separators, 万 and Chinese numerals (两万五) are understood.
   - `date`: `value` as `YYYY-MM-DD`, or `day` as an offset; optional `stale`.
-  - `option`: `options` as `{"A": "…", "B": "…"}`, `value` a letter, optional `stale` letters. The harness lists the options under the question.
+  - `option`: `options` as `{"A": "…", "B": "…"}`, `value` a letter, optional `stale` and `confused` letters. The harness lists the options under the question.
   - `multi`: `options` as above, `value` a list of letters; correct only when the set is exact.
   - `provenance`: `who` (`A`, `B` or `C`), `date` (or `day`), `kind` (`user` or `inference`); correct only when all three match.
   - `unknown`: the store does not hold the answer; correct only for `UNKNOWN`. `as` (`number`, `date` or `option`) picks the answer format shown, so the question does not give it away.

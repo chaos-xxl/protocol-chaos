@@ -1,0 +1,17 @@
+{
+  "id": "n1-one-value",
+  "category": "N1",
+  "author": "kiro",
+  "shape": "One matter, one value, said once; asked two days later in a small library.",
+  "keywords": ["{shop}"],
+  "variants": [
+    { "shop": "宜家", "item": "书柜", "budget": "1500" },
+    { "shop": "家具城", "item": "沙发", "budget": "6000" }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "这周末去{shop}买个{item}，预算 {budget} 元。" }
+  ],
+  "probes": [
+    { "day": 2, "assistant": "B", "question": "去{shop}买{item}，预算是多少？", "answer": { "type": "number", "value": "{budget}", "unit": "元" } }
+  ]
+}

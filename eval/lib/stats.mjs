@@ -182,7 +182,8 @@ export function categoryTable(rows, { model, arms, categories, filter }) {
     for (const arm of arms) {
       const list = rows.filter((r) => r.model === model && r.arm === arm && r.category === category && (!filter || filter(r)));
       const counts = Object.fromEntries(['correct', 'stale', 'wrong', 'unknown', 'unparseable', 'failed'].map((o) => [o, list.filter((r) => r.outcome === o).length]));
-      table[category][arm] = { rows: list.length, ...counts, accuracy: list.length ? counts.correct / list.length : NaN };
+      const confused = list.filter((r) => r.detail === 'confused').length;
+      table[category][arm] = { rows: list.length, ...counts, confused, accuracy: list.length ? counts.correct / list.length : NaN };
     }
   }
   return table;

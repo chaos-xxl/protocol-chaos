@@ -1,0 +1,23 @@
+{
+  "id": "d6-who-is-waiting",
+  "category": "D6",
+  "author": "kiro",
+  "shape": "Five small matters told over a week, to different assistants; some end up waiting on someone, some finished or dropped.",
+  "keywords": ["车位", "矫正", "全家福", "电动车", "潜水"],
+  "variants": [{}],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "想在小区租个车位，已经问了物业，等他们回复还有没有空的。" },
+    { "day": 1, "assistant": "B", "user": "牙齿矫正去面诊了，医生说要排队，等医院通知什么时候戴牙套。" },
+    { "day": 1, "time": "21:00", "assistant": "C", "user": "电动车刹车坏了，送去修了。" },
+    { "day": 2, "assistant": "C", "user": "想周六去拍个全家福，影楼约好了上午十点。" },
+    { "day": 2, "time": "21:30", "assistant": "A", "user": "想报个潜水课，下个月开班。" },
+    { "day": 4, "assistant": "A", "user": "电动车修好了，花了 260。" },
+    { "day": 5, "assistant": "B", "user": "潜水课不报了，下个月要出差。" }
+  ],
+  "probes": [
+    { "day": 7, "assistant": "C", "question": "下面这几件事里，哪几件现在是在等别人回复或者安排？",
+      "answer": { "type": "multi", "value": ["A", "B"], "options": { "A": "租小区车位", "B": "牙齿矫正", "C": "拍全家福", "D": "修电动车", "E": "报潜水课" } } },
+    { "day": 7, "time": "21:00", "assistant": "A", "question": "下面这几件事里，哪几件已经结束了（办完了，或者不办了）？",
+      "answer": { "type": "multi", "value": ["D", "E"], "options": { "A": "租小区车位", "B": "牙齿矫正", "C": "拍全家福", "D": "修电动车", "E": "报潜水课" } } }
+  ]
+}

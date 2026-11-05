@@ -1,0 +1,27 @@
+{
+  "id": "x2-said-another-way",
+  "category": "X2",
+  "author": "kiro",
+  "shape": "A matter asked about by describing it, without one word of its title.",
+  "keywords": ["{sport}"],
+  "variants": [
+    { "sport": "冲浪", "desc": "在海上站在板子上的", "price": "350" },
+    { "sport": "皮划艇", "desc": "在河里划小船的", "price": "200" }
+  ],
+  "seed": [
+    {
+      "key": "lesson",
+      "title": "2026 年 10 月学{sport}",
+      "state": "active",
+      "facts": { "goal": "学会{sport}。", "constraint": "一节课 {price} 元。" },
+      "accounts": [{ "day": -10, "assistant": "C", "source": "user", "text": "报了个{sport}课，一节课 {price} 元，先上五节试试。" }],
+      "organizedBy": { "assistant": "C", "day": -10 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "{sport}课约了这周六上第一节。" }
+  ],
+  "probes": [
+    { "day": 3, "assistant": "B", "question": "我报的那个{desc}课，一节多少钱？", "answer": { "type": "number", "value": "{price}", "unit": "元" } }
+  ]
+}

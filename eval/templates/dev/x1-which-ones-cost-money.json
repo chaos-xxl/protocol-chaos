@@ -1,0 +1,19 @@
+{
+  "id": "x1-which-ones-cost-money",
+  "category": "X1",
+  "author": "kiro",
+  "shape": "Five new matters in five days; the question is about something in their words, not their titles.",
+  "keywords": ["窗帘", "乐高编程", "银杏", "番茄苗", "老花镜"],
+  "variants": [{}],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "下个月想把卧室的窗帘换了，挑遮光好一点的。" },
+    { "day": 1, "assistant": "B", "user": "给侄子报了个乐高编程课，学费 2400，我出一半。" },
+    { "day": 2, "assistant": "C", "user": "周末想去郊外看银杏，叫上大学室友。" },
+    { "day": 3, "assistant": "A", "user": "阳台那几盆花想换成番茄苗，自己种着玩。" },
+    { "day": 4, "assistant": "B", "user": "我爸的老花镜碎了，带他去配一副新的，说好我来出钱，大概 600。" }
+  ],
+  "probes": [
+    { "day": 6, "assistant": "C", "question": "我这几天提的这几件事里，哪几件我说了要花多少钱？",
+      "answer": { "type": "multi", "value": ["B", "E"], "options": { "A": "换卧室窗帘", "B": "侄子的乐高编程课", "C": "去郊外看银杏", "D": "阳台种番茄苗", "E": "给我爸配老花镜" } } }
+  ]
+}

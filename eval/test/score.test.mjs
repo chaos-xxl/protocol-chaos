@@ -30,6 +30,9 @@ test('a number answer: correct, stale or wrong', () => {
   const several = score(number, 'ANSWER: 25000（原来是 20000）');
   assert.equal(several.outcome, 'correct');
   assert.equal(several.review, 'several numbers');
+  const mixed = score({ ...number, confused: ['800'] }, 'ANSWER: 800');
+  assert.deepEqual([mixed.outcome, mixed.detail], ['wrong', 'confused'], 'the value of the similar matter');
+  assert.equal(score({ ...number, confused: ['800'] }, 'ANSWER: 900').detail, undefined);
 });
 
 test('dates, with and without a year', () => {

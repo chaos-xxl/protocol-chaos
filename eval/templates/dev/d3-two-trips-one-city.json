@@ -1,0 +1,23 @@
+{
+  "id": "d3-two-trips-one-city",
+  "category": "D3",
+  "author": "kiro",
+  "shape": "Two trips to the same city a month apart, one for work and one with family; each changed once, by different assistants, in between each other.",
+  "keywords": ["{city}"],
+  "variants": [
+    { "city": "成都", "m1": "11", "m2": "12", "h1": "450", "h1b": "550", "h2": "600", "h2b": "800" },
+    { "city": "西安", "m1": "11", "m2": "12", "h1": "400", "h1b": "500", "h2": "700", "h2b": "900" }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "{m1} 月中要去{city}出差三天，公司报销，酒店标准每晚 {h1} 元以内。" },
+    { "day": 2, "assistant": "B", "user": "{m2} 月底想和爱人去{city}玩几天，自己出钱，酒店先按每晚 {h2} 元看。" },
+    { "day": 5, "assistant": "C", "user": "{city}出差那趟，公司把酒店标准提到每晚 {h1b} 元了。" },
+    { "day": 7, "assistant": "A", "user": "{m2} 月和爱人去{city}那次，酒店想住好一点，每晚 {h2b} 元的。" }
+  ],
+  "probes": [
+    { "day": 9, "assistant": "B", "question": "{m1} 月去{city}出差，酒店每晚的标准现在是多少？",
+      "answer": { "type": "number", "value": "{h1b}", "unit": "元", "stale": ["{h1}"], "confused": ["{h2}", "{h2b}"] } },
+    { "day": 9, "time": "21:00", "assistant": "C", "question": "{m2} 月和爱人去{city}玩，酒店现在打算住每晚多少的？",
+      "answer": { "type": "number", "value": "{h2b}", "unit": "元", "stale": ["{h2}"], "confused": ["{h1}", "{h1b}"] } }
+  ]
+}

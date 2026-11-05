@@ -1,0 +1,31 @@
+{
+  "id": "x3-dentist-noted-under-the-car",
+  "category": "X3",
+  "author": "kiro",
+  "shape": "Something said in passing while talking about another matter, and recorded there; asked about on its own later.",
+  "keywords": ["牙", "4S 店"],
+  "variants": [
+    { "clinic": "口腔诊所", "time": "下午三点", "other": "上午十点" },
+    { "clinic": "社区医院的牙科", "time": "下午四点半", "other": "上午九点" }
+  ],
+  "seed": [
+    {
+      "key": "car",
+      "title": "2026 年 10 月车子保养",
+      "state": "active",
+      "facts": { "goal": "10 月把车子保养做了。", "plan": "周四上午送去 4S 店。" },
+      "accounts": [
+        { "day": -6, "assistant": "A", "source": "user", "text": "车子该保养了，周四上午送去 4S 店。" },
+        { "day": -5, "assistant": "C", "source": "user", "text": "周四送完车顺便去看牙，约了{clinic}{time}。" }
+      ],
+      "organizedBy": { "assistant": "C", "day": -5 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "B", "user": "车子保养的时候顺便把雨刮也换了吧。" }
+  ],
+  "probes": [
+    { "day": 2, "assistant": "A", "question": "我约的看牙是什么时候？",
+      "answer": { "type": "option", "value": "A", "options": { "A": "周四{time}", "B": "周五{other}", "C": "周四上午" } } }
+  ]
+}

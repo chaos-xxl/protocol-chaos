@@ -42,8 +42,10 @@ function fail(message) {
 /** Every template in every split, expanded, and the library with all their keywords reserved. */
 function material(splits) {
   const all = loadTemplates(TEMPLATES, SPLITS);
-  const cases = expandAll(all.filter((t) => splits.includes(t.split)));
-  const reserved = [...new Set(all.flatMap(({ template }) => template.keywords))];
+  const every = expandAll(all);
+  const cases = every.filter((c) => splits.includes(c.split));
+  // Keywords as the variants fill them in, from every split, so that dev and formal share one library.
+  const reserved = [...new Set(every.flatMap((c) => c.keywords))].sort();
   const library = generateLibrary({ seed: LIBRARY_SEED, reserved });
   return { all, cases, library, reserved };
 }

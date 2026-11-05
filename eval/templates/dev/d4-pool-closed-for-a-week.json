@@ -1,0 +1,31 @@
+{
+  "id": "d4-pool-closed-for-a-week",
+  "category": "D4",
+  "author": "kiro",
+  "shape": "A standing weekly routine, interrupted for one week; asked during that week about the routine itself and about the week.",
+  "keywords": ["游泳"],
+  "variants": [
+    { "pool": "体育中心游泳馆", "alt": "每天晚上在小区里跑步五公里", "days": "一、三、五" },
+    { "pool": "大学城游泳馆", "alt": "去公司楼下的健身房练器械", "days": "二、四、六" }
+  ],
+  "seed": [
+    {
+      "key": "swim",
+      "title": "2026 年每周游泳三次",
+      "state": "active",
+      "facts": { "goal": "2026 年保持每周游泳三次。", "plan": "每周{days}晚上去{pool}游一小时。" },
+      "accounts": [{ "day": -40, "assistant": "B", "source": "user", "text": "今年要坚持每周游三次泳，周{days}晚上去{pool}，每次一小时。" }],
+      "organizedBy": { "assistant": "B", "day": -40 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "{pool}这周闭馆检修，这几天我先改成{alt}，就这一周。" },
+    { "day": 2, "assistant": "C", "user": "闭馆这几天{alt}，膝盖有点酸，周四歇一天。" }
+  ],
+  "probes": [
+    { "day": 3, "assistant": "B", "question": "不算这周闭馆的特殊情况，我平常固定的锻炼安排是什么？",
+      "answer": { "type": "option", "value": "A", "options": { "A": "每周{days}晚上去{pool}游泳", "B": "{alt}", "C": "每周锻炼两次，时间不固定" }, "stale": ["B"] } },
+    { "day": 3, "time": "21:00", "assistant": "A", "question": "{pool}闭馆的这一周，我是怎么安排锻炼的？",
+      "answer": { "type": "option", "value": "B", "options": { "A": "照常去{pool}游泳", "B": "{alt}", "C": "这周完全不锻炼" } } }
+  ]
+}
