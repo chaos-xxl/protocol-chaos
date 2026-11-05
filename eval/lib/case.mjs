@@ -39,7 +39,7 @@ function saveConversation(directory, name, record) {
  * Runs one case in one arm. Writes <directory>/result.json and returns it:
  * {rows: probe results, conversations: per-conversation counts}.
  */
-export async function runCase({ caseDef, arm: armName, model, rep, provider, library, directory, prompts, maxModelCalls = 25, keepStores = true }) {
+export async function runCase({ caseDef, arm: armName, model, rep, provider, library, directory, prompts, maxModelCalls = 25, keepStores = true, runTag = 'run' }) {
   const arm = ARMS[armName];
   if (existsSync(directory)) rmSync(directory, { recursive: true, force: true });
   const store = join(directory, 'store');
@@ -52,7 +52,7 @@ export async function runCase({ caseDef, arm: armName, model, rep, provider, lib
     let system;
     try {
       system = systemPrompt(prompts, armName, { ...at, view: handle.view });
-      result = await converse({ provider, system, user, store: handle, maxModelCalls });
+      result = await converse({ provider, system, user, store: handle, maxModelCalls, conversationId: `${runTag}/${model.id}/r${rep}/${caseDef.id}/${armName}/${name}` });
     } finally {
       await handle.close();
     }

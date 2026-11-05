@@ -9,9 +9,10 @@
  * @param {string} o.user
  * @param {{tools: object[], has: Function, call: Function}} o.store the arm's store, open for this conversation
  * @param {number} [o.maxModelCalls]
+ * @param {string} [o.conversationId] passed to the gateway, which may use it to route the conversation to its cache
  * @returns {Promise<{ok: boolean, reply?: string, error?: string, messages: object[], requests: object[], toolCalls: number, toolErrors: number}>}
  */
-export async function converse({ provider, system, user, store, maxModelCalls = 25 }) {
+export async function converse({ provider, system, user, store, maxModelCalls = 25, conversationId }) {
   const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
   const requests = [];
   let toolCalls = 0;
@@ -20,7 +21,7 @@ export async function converse({ provider, system, user, store, maxModelCalls = 
   for (let step = 0; step < maxModelCalls; step += 1) {
     let response;
     try {
-      response = await provider.complete(messages, store.tools);
+      response = await provider.complete(messages, store.tools, { conversationId });
     } catch (error) {
       return end({ ok: false, error: `model: ${error.message}` });
     }

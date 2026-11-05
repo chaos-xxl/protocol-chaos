@@ -12,42 +12,34 @@
 //       Writes results.jsonl, summary.json, report.md and the review packet.
 //   node eval/cli.mjs d7 [--out FILE]
 //       The deterministic demonstration of two assistants writing at once.
+//   node --env-file=eval/.env.local eval/cli.mjs models --gateway eval/gateway.local.json
+//       The models a gateway lists, by provider.
+//   node --env-file=eval/.env.local eval/cli.mjs screen --gateway eval/gateway.local.json --candidates a,b,c
+//       Four conversations per candidate model: can it take part? Writes eval/runs/screen-*/.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ARMS, caseMatters, runCase, verifyCase } from './lib/case.mjs';
-import { generateLibrary, describeLibrary } from './lib/library.mjs';
+import { describeLibrary } from './lib/library.mjs';
+import { SPLITS, TEMPLATES, material } from './lib/material.mjs';
 import { loadPrompts, systemPrompt } from './lib/prompts.mjs';
-import { checkModel, createProvider } from './lib/provider.mjs';
+import { checkModel, createProvider, listModels } from './lib/provider.mjs';
 import { rehearsalProvider } from './lib/rehearsal.mjs';
 import { analyze, collect, renderReport, reviewPacket } from './lib/report.mjs';
-import { expandAll, loadTemplates, scaleCases } from './lib/templates.mjs';
+import { modelFromGateway, renderScreen, screen } from './lib/screen.mjs';
+import { scaleCases } from './lib/templates.mjs';
 import { random, readJson, runLimited, seedOf, sha256, shuffle, writeFileAtomic, writeJson } from './lib/util.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const EVAL = join(ROOT, 'eval');
-const TEMPLATES = join(EVAL, 'templates');
-const SPLITS = ['dev', 'formal'];
-const LIBRARY_SEED = 20261104;
 
 const say = (text) => process.stderr.write(`${text}\n`);
 function fail(message) {
   say(message);
   process.exit(1);
-}
-
-/** Every template in every split, expanded, and the library with all their keywords reserved. */
-function material(splits) {
-  const all = loadTemplates(TEMPLATES, SPLITS);
-  const every = expandAll(all);
-  const cases = every.filter((c) => splits.includes(c.split));
-  // Keywords as the variants fill them in, from every split, so that dev and formal share one library.
-  const reserved = [...new Set(every.flatMap((c) => c.keywords))].sort();
-  const library = generateLibrary({ seed: LIBRARY_SEED, reserved });
-  return { all, cases, library, reserved };
 }
 
 function hashFiles(files) {
@@ -191,7 +183,7 @@ async function run(values) {
         return;
       }
       try {
-        await runCase({ ...job, model, provider, library, prompts });
+        await runCase({ ...job, model, provider, library, prompts, runTag: basename(out) });
       } catch (error) {
         // A case that could not run at all (a server that did not start, a store that could not be written) still counts:
         // each of its probes is a failure.
@@ -248,6 +240,43 @@ async function preview(values) {
   }
 }
 
+// ---- gateways: listing and screening models ----
+
+function gatewayOf(values) {
+  const file = resolve(values.gateway ?? join(EVAL, 'gateway.local.json'));
+  if (!existsSync(file)) fail(`No gateway description at ${file}.`);
+  const gateway = readJson(file);
+  if (!gateway.apiKeyEnv || !process.env[gateway.apiKeyEnv]) fail(`The environment variable ${gateway.apiKeyEnv ?? '(apiKeyEnv)'} is not set; run with --env-file.`);
+  return gateway;
+}
+
+async function models(values) {
+  const gateway = gatewayOf(values);
+  const list = await listModels({ base: gateway.modelsBase, key: process.env[gateway.apiKeyEnv] });
+  const byProvider = new Map();
+  for (const m of list) {
+    const provider = m.id.includes('/') ? m.id.slice(0, m.id.indexOf('/')) : '(none)';
+    byProvider.set(provider, [...(byProvider.get(provider) ?? []), m.id]);
+  }
+  const lines = [...byProvider].sort().map(([provider, ids]) => `${provider} (${ids.length}):\n  ${ids.sort().join('\n  ')}`);
+  process.stdout.write(`${list.length} models\n${lines.join('\n')}\n`);
+  if (values.out) writeJson(resolve(values.out), list);
+}
+
+async function screenCommand(values) {
+  const gateway = gatewayOf(values);
+  const names = (values.candidates ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (names.length === 0) fail('--candidates takes the gateway names of the models to screen, separated by commas.');
+  const list = names.map((name) => checkModel(modelFromGateway(gateway, name)));
+  const { cases, library } = material(SPLITS);
+  const out = resolve(values.out ?? join(EVAL, 'runs', `screen-${new Date().toISOString().replace(/[:.]/g, '-')}`));
+  const records = await screen(list, { library, cases, out, concurrency: Number(values.concurrency ?? 4) });
+  writeJson(join(out, 'screen.json'), records);
+  writeFileAtomic(join(out, 'screen.md'), renderScreen(records));
+  process.stdout.write(renderScreen(records));
+  say(`Conversations: ${join(out, 'conversations')}`);
+}
+
 // ---- main ----
 
 const { values, positionals } = parseArgs({
@@ -256,6 +285,7 @@ const { values, positionals } = parseArgs({
     split: { type: 'string' }, models: { type: 'string' }, model: { type: 'string', multiple: true }, reps: { type: 'string' },
     arms: { type: 'string' }, cases: { type: 'string' }, case: { type: 'string' }, scale: { type: 'boolean' }, out: { type: 'string' },
     resume: { type: 'string' }, dry: { type: 'boolean' }, concurrency: { type: 'string' }, 'allow-dirty': { type: 'boolean' },
+    gateway: { type: 'string' }, candidates: { type: 'string' },
   },
 });
 const [command, ...rest] = positionals;
@@ -264,4 +294,6 @@ else if (command === 'run') await run(values);
 else if (command === 'report') report(rest[0] ?? fail('report needs the run directory'));
 else if (command === 'preview') await preview(values);
 else if (command === 'd7') await (await import('./lib/d7.mjs')).main(values);
-else fail('Commands: validate, run, report, preview, d7. See the comment at the top of eval/cli.mjs.');
+else if (command === 'models') await models(values);
+else if (command === 'screen') await screenCommand(values);
+else fail('Commands: validate, run, report, preview, d7, models, screen. See the comment at the top of eval/cli.mjs.');

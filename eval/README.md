@@ -111,7 +111,9 @@ The shared instructions ask the model to end its reply with one line `ANSWER: <v
 
 ## Models
 
-Models are reached through any OpenAI-compatible Chat Completions endpoint with tool calling. A run's model list (`eval/models.local.json`, not committed; `eval/models.example.json` shows the shape) gives, for each model: the endpoint, the environment variable holding its key, the model name, extra request fields (for example DeepSeek's `thinking`), which fields of an assistant message must be sent back on later requests (DeepSeek's `reasoning_content` when thinking is on and tools are offered), and how many cases run at once. Keys are read from the environment, for example `node --env-file=eval/.env.local`, and are removed from anything written to disk. Requests that fail for a passing reason (429, 5xx, a timeout) are retried with backoff; any other failure ends that conversation, which counts as failed. The reference servers started for P get only `PATH` from the environment.
+Models are reached through any OpenAI-compatible Chat Completions endpoint with tool calling, or an Anthropic Messages endpoint (`"api": "anthropic"`; the harness translates the conversation, and marks the system prompt and the newest turn as cache breakpoints). A run's model list (`eval/models.local.json`, not committed; `eval/models.example.json` shows the shape) gives, for each model: the endpoint, the environment variable holding its key, the model name, extra request fields (for example DeepSeek's `thinking`), which fields of an assistant message must be sent back on later requests (DeepSeek's `reasoning_content` when thinking is on and tools are offered), how many cases run at once, and optionally the names of two headers a gateway reads: one carrying a conversation id (sent on every request of a conversation, so the gateway can route it to its cache) and one carrying a new request id on every attempt.
+
+Before the pilot, candidate models are screened through the gateway they are reached by. A gateway description (`eval/gateway.local.json`, not committed) gives its Chat Completions and Messages endpoints, the base for `GET /models`, which model names need the Messages protocol, the key's environment variable, the two header names, and per-model request fields. `screen` gives each candidate four conversations from one dev case: the first message in P twice on fresh stores (the second shows whether the prefix came from the cache), the same message in T2, and a probe in P. It reports whether the model recorded and organized with the protocol's tools, wrote files, answered in the required format, and reported usage; the conversations are kept for reading. Keys are read from the environment, for example `node --env-file=eval/.env.local`, and are removed from anything written to disk. Requests that fail for a passing reason (429, 5xx, a timeout) are retried with backoff; any other failure ends that conversation, which counts as failed. The reference servers started for P get only `PATH` from the environment.
 
 ## Running it
 
@@ -122,6 +124,8 @@ node eval/cli.mjs preview --case <id> --arms P   # the system prompt, first mess
 node --env-file=eval/.env.local eval/cli.mjs run --split dev --reps 1 --model <id>
 node eval/cli.mjs report eval/runs/<run>         # report.md, summary.json, results.jsonl, review packet
 node eval/cli.mjs d7                             # the concurrency demonstration
+node --env-file=eval/.env.local eval/cli.mjs models --gateway eval/gateway.local.json
+node --env-file=eval/.env.local eval/cli.mjs screen --gateway eval/gateway.local.json --candidates <name>,<name>
 npm run test:eval                                # the harness's own tests
 ```
 
@@ -135,8 +139,10 @@ Per model: the primary comparison is P against each text arm on D1 to D6 togethe
 
 | | |
 |---|---|
-| `cli.mjs` | `validate`, `run`, `report`, `preview`, `d7` |
-| `lib/provider.mjs` | the Chat Completions client, usage accounting, retries; a scripted provider for tests |
+| `cli.mjs` | `validate`, `run`, `report`, `preview`, `d7`, `models`, `screen` |
+| `lib/provider.mjs` | the Chat Completions and Messages clients, usage accounting, retries, listing a gateway's models; a scripted provider for tests |
+| `lib/screen.mjs` | screening candidate models |
+| `lib/material.mjs` | the templates and the background library every command uses |
 | `lib/rehearsal.mjs` | the stand-in model of `run --dry` |
 | `lib/arms/protocol.mjs`, `lib/arms/entries.mjs`, `lib/arms/files.mjs` | the three stores, their tools and what each injects |
 | `lib/prompts.mjs`, `prompts/` | the shared instructions and the three arm paragraphs, hashed into every run |

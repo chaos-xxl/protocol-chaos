@@ -79,6 +79,52 @@ test('usage in the shapes endpoints report it', () => {
   assert.deepEqual(usageOf(undefined), { input: null, cached: null, output: null, reasoning: null });
 });
 
+test('per-request headers: the conversation id, and a new request id on every attempt', async () => {
+  queue = [{ status: 502, body: 'x' }, { status: 200, body: deepseekReply }];
+  const provider = createProvider(model({ conversationHeader: 'X-Conversation-Id', requestIdHeader: 'X-Model-Request-Id' }), { env, sleep: noWait });
+  await provider.complete([{ role: 'user', content: 'x' }], [], { conversationId: 'run/m/r1/case~1/P/s1' });
+  const [a, b] = seen.slice(-2);
+  assert.equal(a.headers['x-conversation-id'], 'run/m/r1/case~1/P/s1');
+  assert.equal(b.headers['x-conversation-id'], 'run/m/r1/case~1/P/s1');
+  assert.match(a.headers['x-model-request-id'], /^[0-9a-f-]{36}$/);
+  assert.notEqual(a.headers['x-model-request-id'], b.headers['x-model-request-id']);
+});
+
+test('an Anthropic endpoint: system apart, tool results in user turns, tool use back as tool calls', async () => {
+  queue = [{
+    status: 200,
+    body: {
+      id: 'msg_1', model: 'claude-x', stop_reason: 'tool_use',
+      content: [{ type: 'text', text: '我查一下。' }, { type: 'tool_use', id: 'tu_2', name: 'notes_view', input: { path: 'index.md' } }],
+      usage: { input_tokens: 10, cache_read_input_tokens: 900, cache_creation_input_tokens: 90, output_tokens: 30 },
+    },
+  }];
+  const provider = createProvider(model({ api: 'anthropic', model: 'claude-x', body: { max_tokens: 2000 } }), { env, sleep: noWait });
+  const tools = [{ type: 'function', function: { name: 'notes_view', description: '看文件', parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
+  const messages = [
+    { role: 'system', content: '你是助手 A。' },
+    { role: 'user', content: '搬家预算多少？' },
+    { role: 'assistant', content: null, tool_calls: [{ id: 'tu_1', type: 'function', function: { name: 'notes_search', arguments: '{"query":"搬家"}' } }, { id: 'tu_1b', type: 'function', function: { name: 'notes_search', arguments: '{"query":"预算"}' } }] },
+    { role: 'tool', tool_call_id: 'tu_1', content: '2026年11月搬家.md' },
+    { role: 'tool', tool_call_id: 'tu_1b', content: '没有文件同时包含：预算。' },
+  ];
+  const out = await provider.complete(messages, tools);
+  const { headers, body } = seen.at(-1);
+  assert.equal(headers['anthropic-version'], '2023-06-01');
+  assert.equal(body.max_tokens, 2000);
+  assert.deepEqual(body.system, [{ type: 'text', text: '你是助手 A。', cache_control: { type: 'ephemeral' } }]);
+  assert.deepEqual(body.tools, [{ name: 'notes_view', description: '看文件', input_schema: tools[0].function.parameters }]);
+  assert.deepEqual(body.messages.map((m) => [m.role, m.content.map((c) => c.type)]), [
+    ['user', ['text']], ['assistant', ['tool_use', 'tool_use']], ['user', ['tool_result', 'tool_result']],
+  ]);
+  assert.deepEqual(body.messages[1].content[0], { type: 'tool_use', id: 'tu_1', name: 'notes_search', input: { query: '搬家' } });
+  assert.deepEqual(body.messages[2].content.at(-1).cache_control, { type: 'ephemeral' }, 'the newest turn is a cache breakpoint');
+  assert.equal(out.finishReason, 'tool_calls');
+  assert.equal(out.message.content, '我查一下。');
+  assert.deepEqual(out.message.tool_calls, [{ id: 'tu_2', type: 'function', function: { name: 'notes_view', arguments: '{"path":"index.md"}' } }]);
+  assert.deepEqual(out.usage, { input: 1000, cached: 900, output: 30, reasoning: null });
+});
+
 test('model settings are checked, and a missing key stops before any request', () => {
   assert.throws(() => checkModel({ id: 'm', endpoint: 'http://example.com/v1', model: 'x' }), /loopback/);
   assert.throws(() => checkModel({ id: 'm', endpoint: 'https://user:pw@example.com/v1', model: 'x' }), /credentials/);
