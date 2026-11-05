@@ -10,7 +10,7 @@ import P from './arms/protocol.mjs';
 import T1 from './arms/entries.mjs';
 import T2 from './arms/files.mjs';
 import { readRepository } from './p-writer.mjs';
-import { renderEntry } from './render.mjs';
+import { fileNameFor, renderEntry } from './render.mjs';
 import { writeFileAtomic, writeJson } from './util.mjs';
 
 const MATTER = {
@@ -86,7 +86,7 @@ async function textCell(scenario, arm) {
     const a = await arm.open(dir, AT);
     const snapshot = renderEntry(MATTER, new Map());
     const b = await arm.open(dir, { ...AT, time: '10:05' });
-    const file = '2026年11月杭州出差.md';
+    const file = fileNameFor(MATTER.title);
     if (arm === T1) await b.call('memory', { action: 'replace', old_text: '预算 3000 元；不坐红眼航班。', new_text: B_CONSTRAINT });
     else await b.call('notes_str_replace', { path: file, old_str: '预算 3000 元；不坐红眼航班。', new_str: B_CONSTRAINT });
     await b.close();

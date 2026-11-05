@@ -79,8 +79,8 @@ test('entries and files render and parse back exactly', () => {
 
 test('file names are safe and unique', () => {
   const taken = new Set();
-  assert.equal(fileNameFor('2026 年 3 月 a/b:c?', taken), '2026年3月a-b-c-.md');
-  assert.equal(fileNameFor('2026 年 3 月 a/b:c?', taken), '2026年3月a-b-c--2.md');
+  assert.equal(fileNameFor('2026 年 3 月 a/b:c?', taken), '2026 年 3 月 a-b-c-.md');
+  assert.equal(fileNameFor('2026 年 3 月 a/b:c?', taken), '2026 年 3 月 a-b-c--2.md');
   assert.equal(fileNameFor('index', taken), 'index-2.md');
   assert.equal(fileNameFor('.hidden', taken), 'hidden.md');
 });

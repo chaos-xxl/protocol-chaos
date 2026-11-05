@@ -33,7 +33,7 @@
       "answer": { "type": "option", "value": "C", "options": { "A": "只有{r1}", "B": "只有{r2}", "C": "两条都行", "D": "两条都不行" }, "stale": ["A"] } },
     { "day": 14, "time": "20:30", "assistant": "B", "question": "陪外婆去{city2}那趟，两家住处该订哪家？",
       "answer": { "type": "option", "value": "{gold}", "options": { "A": "{aName}", "B": "{bName}", "C": "两家都行" } } },
-    { "day": 14, "time": "21:00", "assistant": "C", "question": "去{city1}那几天，每天最多安排走多少步？",
+    { "day": 14, "time": "21:00", "assistant": "C", "question": "去{city1}那几天，外婆每天最多能走多少步？",
       "answer": { "type": "number", "value": "15000", "unit": "步", "stale": ["10000"] } }
   ]
 }

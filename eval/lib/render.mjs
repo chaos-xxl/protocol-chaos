@@ -103,9 +103,12 @@ export function parseEntries(entries) {
 
 // ---- T2: files ----
 
-/** A file name for a title: no path separators or characters some systems refuse, no spaces. */
+/**
+ * A file name for a title: the title itself, without path separators or characters some systems
+ * refuse. Spaces stay, so that a model that writes the title as the file name finds the file.
+ */
 export function fileNameFor(title, taken = new Set()) {
-  const base = title.replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, '').replace(/-+/g, '-').replace(/^[-.]+/, '').slice(0, 80) || '未命名';
+  const base = title.replace(/[/\\:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, ' ').replace(/-+/g, '-').trim().replace(/^[-.]+/, '').slice(0, 80).trim() || '未命名';
   let name = `${base}.md`;
   for (let n = 2; taken.has(name) || name === 'index.md'; n += 1) name = `${base}-${n}.md`;
   taken.add(name);
