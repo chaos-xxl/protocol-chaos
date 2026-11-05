@@ -1,0 +1,42 @@
+{
+  "id": "x2-two-lessons-described",
+  "category": "X2",
+  "author": "kiro",
+  "shape": "Two sports lessons going on at once, each changed during two weeks; asked about by describing the sport, without a word of either matter's name.",
+  "keywords": ["{sport1}", "{sport2}"],
+  "variants": [
+    { "sport1": "冲浪", "desc1": "在海上站在板子上的", "p1": "350", "p1b": "400", "sport2": "攀岩", "desc2": "抓着墙往上爬的", "day2": "周三晚上", "day2b": "周五晚上", "p2": "120" },
+    { "sport1": "皮划艇", "desc1": "坐在小船里拿桨往前走的", "p1": "200", "p1b": "240", "sport2": "射箭", "desc2": "拉弓对着靶子的", "day2": "周二晚上", "day2b": "周四晚上", "p2": "150" }
+  ],
+  "seed": [
+    {
+      "key": "lesson1",
+      "title": "2026 年 10 月学{sport1}",
+      "state": "active",
+      "facts": { "goal": "学会{sport1}。", "constraint": "一节课 {p1} 元。" },
+      "accounts": [{ "day": -10, "assistant": "C", "source": "user", "text": "报了个{sport1}课，一节课 {p1} 元，先上五节试试。" }],
+      "organizedBy": { "assistant": "C", "day": -10 }
+    },
+    {
+      "key": "lesson2",
+      "title": "2026 年练{sport2}",
+      "state": "active",
+      "facts": { "goal": "把{sport2}练起来。", "constraint": "一次 {p2} 元。", "plan": "每{day2}去馆里练。" },
+      "accounts": [{ "day": -20, "assistant": "A", "source": "user", "text": "开始练{sport2}了，每{day2}去馆里，一次 {p2} 元。" }],
+      "organizedBy": { "assistant": "A", "day": -20 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "{sport1}课约了这周六上第一节。" },
+    { "day": 3, "assistant": "B", "user": "{sport2}改成每{day2b}去了，{day2}老加班。" },
+    { "day": 6, "assistant": "C", "user": "{sport1}第一节上完了，教练说我平衡感不错。" },
+    { "day": 8, "assistant": "A", "user": "{sport1}课第二期起涨价，一节 {p1b}，我续了。" },
+    { "day": 10, "assistant": "B", "user": "{sport2}这周去了两次，手有点酸。" }
+  ],
+  "probes": [
+    { "day": 12, "assistant": "C", "question": "我报的那个{desc1}课，现在一节多少钱？",
+      "answer": { "type": "number", "value": "{p1b}", "unit": "元", "stale": ["{p1}"], "confused": ["{p2}"] } },
+    { "day": 12, "time": "21:00", "assistant": "A", "question": "那个{desc2}，我现在每周什么时候去？",
+      "answer": { "type": "option", "value": "B", "options": { "A": "每{day2}", "B": "每{day2b}", "C": "每周六上午" }, "stale": ["A"], "confused": ["C"] } }
+  ]
+}

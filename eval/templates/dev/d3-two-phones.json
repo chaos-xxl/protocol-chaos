@@ -1,0 +1,28 @@
+{
+  "id": "d3-two-phones",
+  "category": "D3",
+  "author": "kiro",
+  "shape": "Two phones to buy at the same time, one for the person's mother and one for themselves, each changed twice, told interleaved to different assistants; one is put off.",
+  "keywords": ["手机"],
+  "variants": [
+    { "m1": "2000", "m2": "2500", "s1": "4000", "s2": "5500" },
+    { "m1": "1500", "m2": "1800", "s1": "3500", "s2": "4500" }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "想给我妈换个手机，预算 {m1} 以内，要字大、声音大的。" },
+    { "day": 2, "assistant": "B", "user": "我自己的手机也该换了，预算先按 {s1} 看。" },
+    { "day": 4, "assistant": "C", "user": "我妈那个手机，她说要红色的。" },
+    { "day": 6, "assistant": "A", "user": "我那台手机预算提到 {s2}，想要拍照好一点的。" },
+    { "day": 8, "assistant": "B", "user": "给我妈的手机预算再加点，{m2} 吧，屏幕大的贵一些。" },
+    { "day": 10, "assistant": "C", "user": "我自己那台先不买了，等明年新款出来再说。" },
+    { "day": 12, "assistant": "A", "user": "我妈的手机周末去店里买，我爱人陪她去。" }
+  ],
+  "probes": [
+    { "day": 14, "assistant": "B", "question": "给我妈买手机，预算现在是多少？",
+      "answer": { "type": "number", "value": "{m2}", "unit": "元", "stale": ["{m1}"], "confused": ["{s1}", "{s2}"] } },
+    { "day": 14, "time": "20:30", "assistant": "C", "question": "我自己换手机那件事，现在是什么情况？",
+      "answer": { "type": "option", "value": "A", "options": { "A": "先不买了，等明年新款出来再说", "B": "这周末去店里买", "C": "预算提到 {s2}，正在挑拍照好的" }, "stale": ["C"], "confused": ["B"] } },
+    { "day": 14, "time": "21:00", "assistant": "A", "question": "我自己那台手机，最后说的预算是多少？",
+      "answer": { "type": "number", "value": "{s2}", "unit": "元", "stale": ["{s1}"], "confused": ["{m1}", "{m2}"] } }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "id": "d6-errands-over-two-weeks",
+  "category": "D6",
+  "author": "kiro",
+  "shape": "Five small matters told over two weeks to different assistants; most change state more than once: waiting, then decided, then done; dropped, then taken up again.",
+  "keywords": ["车位", "矫正", "全家福", "电动车", "潜水"],
+  "variants": [{}],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "想在小区租个车位，问了物业，等他们回复还有没有空的。" },
+    { "day": 1, "assistant": "B", "user": "牙齿矫正去面诊了，医生说要排队，等医院通知什么时候戴牙套。" },
+    { "day": 1, "time": "21:00", "assistant": "C", "user": "电动车刹车坏了，送去修了，店里说要等配件到。" },
+    { "day": 2, "assistant": "A", "user": "想周六去拍个全家福，影楼约好了上午十点。" },
+    { "day": 2, "time": "21:30", "assistant": "B", "user": "想报个潜水课学潜水，下个月开班。" },
+    { "day": 4, "assistant": "C", "user": "电动车修好了，花了 260。" },
+    { "day": 5, "assistant": "A", "user": "潜水课不报了，下个月要出差。" },
+    { "day": 7, "assistant": "B", "user": "物业回复了，车位还有空的，下周去签合同。" },
+    { "day": 9, "assistant": "C", "user": "全家福拍完了，挺满意的。" },
+    { "day": 11, "assistant": "A", "user": "出差取消了，潜水课还是报上了，下周开课。" },
+    { "day": 13, "assistant": "B", "user": "车位的合同签好了。" }
+  ],
+  "probes": [
+    { "day": 15, "assistant": "C", "question": "下面这几件事里，哪几件现在还在等别人回复或者安排？",
+      "answer": { "type": "multi", "value": ["B"], "options": { "A": "租小区车位", "B": "牙齿矫正", "C": "拍全家福", "D": "修电动车", "E": "学潜水" } } },
+    { "day": 15, "time": "20:30", "assistant": "A", "question": "下面这几件事里，哪几件已经办完了？",
+      "answer": { "type": "multi", "value": ["A", "C", "D"], "options": { "A": "租小区车位", "B": "牙齿矫正", "C": "拍全家福", "D": "修电动车", "E": "学潜水" } } },
+    { "day": 15, "time": "21:00", "assistant": "B", "question": "学潜水那件事，现在是什么情况？",
+      "answer": { "type": "option", "value": "B", "options": { "A": "不报了，下个月要出差", "B": "报上了，下周开课", "C": "等出差回来再报" }, "stale": ["A"] } }
+  ]
+}

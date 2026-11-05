@@ -1,0 +1,30 @@
+{
+  "id": "d1-move-and-sofa",
+  "category": "D1",
+  "author": "kiro",
+  "shape": "A move planned over three weeks: its budget and date change, one change is a correction, someone else's suggestion is not taken, and a second purchase for the new home has its own budget.",
+  "keywords": ["搬家", "沙发"],
+  "variants": [
+    { "b1": "20000", "b2": "26000", "b3": "24000", "quote": "6800", "s1": "5000", "s3": "6000", "d1": "15", "d2": "22", "date1": "2026-11-15", "date2": "2026-11-22" },
+    { "b1": "9000", "b2": "13000", "b3": "11000", "quote": "3500", "s1": "3000", "s3": "4000", "d1": "8", "d2": "14", "date1": "2026-11-08", "date2": "2026-11-14" }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "下个月 {d1} 号搬家，预算先定 {b1} 元，回头找家搬家公司。" },
+    { "day": 2, "assistant": "B", "user": "搬家那天我妈说过来帮忙收拾。对了，新家想换个沙发，预算 {s1} 左右。" },
+    { "day": 4, "assistant": "C", "user": "问了两家搬家公司，便宜的那家报价 {quote}，还没定。要是那天下雨，一般是不是得改期？" },
+    { "day": 6, "assistant": "A", "user": "搬家的预算加到 {b2} 吧，东西比想的多。" },
+    { "day": 9, "assistant": "B", "user": "搬家改到 {d2} 号了，{d1} 号那天房东还没退完。" },
+    { "day": 11, "assistant": "C", "user": "上次说的搬家预算算多了，应该是 {b3}，不是 {b2}。" },
+    { "day": 13, "assistant": "A", "user": "我妈说不如推到月底再搬，我觉得没必要，还是 {d2} 号。" },
+    { "day": 15, "assistant": "B", "user": "沙发我爱人说预算再加一千，那就 {s3} 吧。" },
+    { "day": 16, "time": "21:00", "assistant": "C", "user": "搬家公司就定便宜的那家了。" }
+  ],
+  "probes": [
+    { "day": 19, "assistant": "A", "question": "我搬家的预算现在定的是多少？",
+      "answer": { "type": "number", "value": "{b3}", "unit": "元", "stale": ["{b1}", "{b2}"], "confused": ["{s1}", "{s3}", "{quote}"] } },
+    { "day": 19, "time": "20:30", "assistant": "B", "question": "我哪天搬家？",
+      "answer": { "type": "date", "value": "{date2}", "stale": ["{date1}"] } },
+    { "day": 19, "time": "21:00", "assistant": "C", "question": "新家的沙发，预算现在是多少？",
+      "answer": { "type": "number", "value": "{s3}", "unit": "元", "stale": ["{s1}"], "confused": ["{b1}", "{b2}", "{b3}", "{quote}"] } }
+  ]
+}

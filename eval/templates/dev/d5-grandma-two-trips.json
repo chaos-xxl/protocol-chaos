@@ -1,0 +1,39 @@
+{
+  "id": "d5-grandma-two-trips",
+  "category": "D5",
+  "author": "kiro",
+  "shape": "A long-lived matter sets two standing conditions; one of them is relaxed later; two trips under it are planned without repeating the conditions, and the choices depend on them.",
+  "keywords": ["外婆", "{city1}", "{city2}"],
+  "variants": [
+    { "city1": "扬州", "city2": "泉州", "r1": "瘦西湖那条线", "r1s": "8000", "r2": "古城加东关街那条线", "r2s": "13000", "hotel": "车站旁边那家连锁酒店",
+      "a": "开元寺旁边的酒店，有电梯，贵一点", "b": "古城里的老宅民宿，住三楼，只有楼梯", "aName": "开元寺旁边的酒店", "bName": "古城里的老宅民宿", "gold": "A" },
+    { "city1": "苏州", "city2": "大理", "r1": "拙政园那条线", "r1s": "7000", "r2": "平江路加山塘街那条线", "r2s": "14000", "hotel": "地铁站边上那家连锁酒店",
+      "a": "古城里的客栈，住二楼，没有电梯", "b": "洱海边的酒店，有电梯", "aName": "古城里的客栈", "bName": "洱海边的酒店", "gold": "B" }
+  ],
+  "seed": [
+    {
+      "key": "grandma",
+      "title": "2026 年陪外婆出门走走",
+      "state": "active",
+      "facts": { "goal": "2026 年陪外婆出门玩几次。", "constraint": "外婆膝盖不好：住的地方必须有电梯；每天走路不超过一万步。" },
+      "accounts": [{ "day": -60, "assistant": "C", "source": "user", "text": "今年想陪外婆出门走走。她膝盖不好，住的地方一定要有电梯，一天走路别超过一万步。" }],
+      "organizedBy": { "assistant": "C", "day": -60 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "下个月陪外婆去{city1}住三天，算今年陪外婆出门的第一趟。" },
+    { "day": 2, "assistant": "B", "user": "{city1}那趟，景点有两条线：一条是{r1}，大概走 {r1s} 步；另一条是{r2}，大概 {r2s} 步。" },
+    { "day": 5, "assistant": "C", "user": "外婆这阵子膝盖好多了，医生说每天走一万五千步以内都没问题，住的地方还是得有电梯。" },
+    { "day": 7, "assistant": "A", "user": "年底还想陪外婆去{city2}，那趟的住处看了两家：一家是{a}；另一家是{b}。" },
+    { "day": 9, "assistant": "B", "user": "{city1}那趟的住处订好了，住{hotel}。" },
+    { "day": 12, "assistant": "C", "user": "{city2}那趟可能改成开春再去，还没定。" }
+  ],
+  "probes": [
+    { "day": 14, "assistant": "A", "question": "去{city1}那趟，这两条景点线外婆走得了哪条？",
+      "answer": { "type": "option", "value": "C", "options": { "A": "只有{r1}", "B": "只有{r2}", "C": "两条都行", "D": "两条都不行" }, "stale": ["A"] } },
+    { "day": 14, "time": "20:30", "assistant": "B", "question": "陪外婆去{city2}那趟，两家住处该订哪家？",
+      "answer": { "type": "option", "value": "{gold}", "options": { "A": "{aName}", "B": "{bName}", "C": "两家都行" } } },
+    { "day": 14, "time": "21:00", "assistant": "C", "question": "去{city1}那几天，每天最多安排走多少步？",
+      "answer": { "type": "number", "value": "15000", "unit": "步", "stale": ["10000"] } }
+  ]
+}

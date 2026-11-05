@@ -1,0 +1,40 @@
+{
+  "id": "d2-anniversary-dinner",
+  "category": "D2",
+  "author": "kiro",
+  "shape": "A family dinner planned over two weeks with three assistants; an early guess at the number of guests was an assistant's, the real number came later from the person.",
+  "keywords": ["结婚三十周年", "{restaurant}"],
+  "variants": [
+    { "restaurant": "江边那家粤菜馆", "n": "16", "deposit": "1000" },
+    { "restaurant": "老城区那家本帮菜馆", "n": "18", "deposit": "800" }
+  ],
+  "seed": [
+    {
+      "key": "dinner",
+      "title": "2026 年 11 月给爸妈办结婚三十周年聚餐",
+      "state": "active",
+      "facts": { "goal": "11 月请家里人吃顿饭，给爸妈过结婚三十周年。", "constraint": "推测：大概请十来个人（依据：用户说过只请家里人，亲戚不多）。" },
+      "accounts": [
+        { "day": -10, "assistant": "A", "source": "user", "text": "下个月爸妈结婚三十周年，想请家里人吃顿饭。" },
+        { "day": -8, "assistant": "C", "source": "agent_response", "text": "推测：大概请十来个人（依据：用户说过只请家里人，亲戚不多）。" }
+      ],
+      "organizedBy": { "assistant": "C", "day": -8 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "爸妈结婚三十周年那顿饭，定在 11 月 21 号晚上，订{restaurant}。" },
+    { "day": 3, "assistant": "C", "user": "问了一圈，来吃饭的大概 {n} 个人。" },
+    { "day": 5, "assistant": "B", "user": "饭店那边要先交 {deposit} 定金，我已经交了。" },
+    { "day": 7, "assistant": "A", "user": "我妈说想加个蛋糕，我觉得可以，蛋糕我来订。" },
+    { "day": 9, "assistant": "C", "user": "纪念日那顿饭，人数可能还会多两三个，到时候再说。" },
+    { "day": 11, "assistant": "B", "user": "蛋糕订好了，八寸的，当天下午送到饭店。" }
+  ],
+  "probes": [
+    { "day": 13, "assistant": "A", "question": "纪念日那顿饭请十来个人，这个说法是谁、哪天记下的？是我自己说的，还是助手推测的？",
+      "answer": { "type": "provenance", "who": "C", "day": -8, "kind": "inference" } },
+    { "day": 13, "time": "20:30", "assistant": "B", "question": "纪念日那顿饭，我自己说的来吃饭的人数是多少？",
+      "answer": { "type": "number", "value": "{n}", "unit": "人", "confused": ["10"] } },
+    { "day": 13, "time": "21:00", "assistant": "C", "question": "饭店的定金已经交了，这件事我是哪天、跟哪个助手说的？",
+      "answer": { "type": "provenance", "who": "B", "day": 5, "kind": "user" } }
+  ]
+}

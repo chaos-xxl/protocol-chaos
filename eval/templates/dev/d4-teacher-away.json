@@ -1,0 +1,37 @@
+{
+  "id": "d4-teacher-away",
+  "category": "D4",
+  "author": "kiro",
+  "shape": "Weekly lessons replaced by online ones for a few weeks while the teacher is away; the online time changes, the standing fee changes meanwhile, and the teacher comes back early.",
+  "keywords": ["{inst}"],
+  "variants": [
+    { "inst": "钢琴", "fee1": "300", "fee2": "350" },
+    { "inst": "小提琴", "fee1": "260", "fee2": "300" }
+  ],
+  "seed": [
+    {
+      "key": "lesson",
+      "title": "2026 年学{inst}",
+      "state": "active",
+      "facts": { "goal": "2026 年把{inst}学起来。", "constraint": "一节课 {fee1} 元。", "plan": "每周六上午十点去琴行上课，一次一小时。" },
+      "accounts": [{ "day": -60, "assistant": "A", "source": "user", "text": "今年开始学{inst}，每周六上午十点去琴行上课，一节课 {fee1} 元。" }],
+      "organizedBy": { "assistant": "A", "day": -60 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "B", "user": "{inst}老师这周起出国三周，这三周改成每周日晚上八点线上上课。" },
+    { "day": 6, "time": "22:00", "assistant": "C", "user": "线上课第一次上了，效果还行。" },
+    { "day": 8, "assistant": "A", "user": "琴行说下个月起课时费涨到 {fee2} 一节。" },
+    { "day": 10, "assistant": "B", "user": "线上课改到周日晚上七点吧，八点我要去接我爱人下班。" },
+    { "day": 13, "time": "21:30", "assistant": "C", "user": "这周日线上课照常上了，七点。" },
+    { "day": 17, "assistant": "A", "user": "{inst}老师提前回来了，这周六就恢复去琴行上课。" }
+  ],
+  "probes": [
+    { "day": 20, "assistant": "B", "question": "我学{inst}，平常固定的上课时间是什么？",
+      "answer": { "type": "option", "value": "A", "options": { "A": "每周六上午十点去琴行", "B": "每周日晚上七点线上上课", "C": "每周日晚上八点线上上课" }, "stale": ["B", "C"] } },
+    { "day": 20, "time": "20:30", "assistant": "C", "question": "老师出国那几周，线上课最后定在什么时间？",
+      "answer": { "type": "option", "value": "B", "options": { "A": "每周日晚上八点", "B": "每周日晚上七点", "C": "每周六上午十点" }, "stale": ["A"], "confused": ["C"] } },
+    { "day": 20, "time": "21:00", "assistant": "A", "question": "下个月起，{inst}课一节多少钱？",
+      "answer": { "type": "number", "value": "{fee2}", "unit": "元", "stale": ["{fee1}"] } }
+  ]
+}

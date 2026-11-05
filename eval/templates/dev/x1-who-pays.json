@@ -1,0 +1,24 @@
+{
+  "id": "x1-who-pays",
+  "category": "X1",
+  "author": "kiro",
+  "shape": "Five new matters over ten days; who pays for what is said in their words, not their titles, and changes for two of them.",
+  "keywords": ["窗帘", "乐高编程", "银杏", "番茄苗", "老花镜"],
+  "variants": [{}],
+  "sessions": [
+    { "day": 0, "assistant": "A", "user": "下个月想把卧室的窗帘换了，挑遮光好一点的。" },
+    { "day": 1, "assistant": "B", "user": "给侄子报了个乐高编程课，学费 2400，我出一半。" },
+    { "day": 2, "assistant": "C", "user": "周末想去郊外看银杏，叫上大学室友。" },
+    { "day": 3, "assistant": "A", "user": "阳台那几盆花想换成番茄苗，自己种着玩。" },
+    { "day": 4, "assistant": "B", "user": "我爸的老花镜碎了，带他去配一副新的，说好我来出钱，大概 600。" },
+    { "day": 6, "assistant": "C", "user": "窗帘量好尺寸了，师傅报价 1800，下周来装，装完我付钱。" },
+    { "day": 8, "assistant": "A", "user": "老花镜那个，我爸说他自己出钱，不用我管了。" },
+    { "day": 10, "assistant": "B", "user": "看银杏那次门票一人 50，室友说他请客。" }
+  ],
+  "probes": [
+    { "day": 12, "assistant": "C", "question": "我最近提的这几件事里，现在哪几件说好了由我出钱？",
+      "answer": { "type": "multi", "value": ["A", "B"], "options": { "A": "换卧室窗帘", "B": "侄子的乐高编程课", "C": "去郊外看银杏", "D": "阳台种番茄苗", "E": "给我爸配老花镜" } } },
+    { "day": 12, "time": "21:00", "assistant": "A", "question": "我最近提的这几件事里，哪几件说到过具体的价钱？",
+      "answer": { "type": "multi", "value": ["A", "B", "C", "E"], "options": { "A": "换卧室窗帘", "B": "侄子的乐高编程课", "C": "去郊外看银杏", "D": "阳台种番茄苗", "E": "给我爸配老花镜" } } }
+  ]
+}

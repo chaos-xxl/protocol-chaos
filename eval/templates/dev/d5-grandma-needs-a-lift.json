@@ -23,7 +23,7 @@
     { "day": 3, "assistant": "B", "user": "{city}那趟我看了两家住处：一家是{a}；另一家是{b}。" }
   ],
   "probes": [
-    { "day": 5, "assistant": "C", "question": "陪外婆去{city}那趟，两家住处订哪家？",
+    { "day": 5, "assistant": "C", "question": "陪外婆去{city}那趟，两家住处该订哪家？",
       "answer": { "type": "option", "value": "{gold}", "options": { "A": "{aName}", "B": "{bName}", "C": "两家都行" } } },
     { "day": 5, "time": "21:00", "assistant": "A", "question": "去{city}那几天，每天最多安排走多少步？",
       "answer": { "type": "number", "value": "10000", "unit": "步" } }

@@ -1,0 +1,36 @@
+{
+  "id": "x3-told-in-passing",
+  "category": "X3",
+  "author": "kiro",
+  "shape": "Two things said in passing while talking about other matters: a dentist appointment first noted under a car service and later moved during a talk about a hike, and a pick-up mentioned while talking about the car.",
+  "keywords": ["看牙", "4S 店", "爬山", "体检报告"],
+  "variants": [
+    { "clinic": "口腔诊所", "time": "下午三点", "time2": "上午十点半" },
+    { "clinic": "社区医院的牙科", "time": "下午四点半", "time2": "上午九点" }
+  ],
+  "seed": [
+    {
+      "key": "car",
+      "title": "2026 年 10 月车子保养",
+      "state": "active",
+      "facts": { "goal": "10 月把车子保养做了。", "plan": "10 月 8 日周四上午送去 4S 店。" },
+      "accounts": [
+        { "day": -3, "assistant": "A", "source": "user", "text": "车子该保养了，下周四上午送去 4S 店。" },
+        { "day": -2, "assistant": "C", "source": "user", "text": "下周四送完车顺便去看牙，约了{clinic}{time}。" }
+      ],
+      "organizedBy": { "assistant": "C", "day": -2 }
+    }
+  ],
+  "sessions": [
+    { "day": 0, "assistant": "B", "user": "车子保养的时候顺便把雨刮也换了吧。" },
+    { "day": 1, "assistant": "A", "user": "这周末想带我妈去爬山，看天气。" },
+    { "day": 2, "assistant": "C", "user": "爬山那个，我妈说周日比较好，就周日吧。对了，看牙改到周五{time2}了，诊所刚打电话说的。" },
+    { "day": 3, "time": "12:00", "assistant": "B", "user": "车子送到 4S 店了，说下午能取。下周三还得去给我妈拿体检报告。" }
+  ],
+  "probes": [
+    { "day": 3, "time": "21:00", "assistant": "A", "question": "我约的看牙是什么时候？",
+      "answer": { "type": "option", "value": "B", "options": { "A": "周四{time}", "B": "周五{time2}", "C": "周四上午" }, "stale": ["A"], "confused": ["C"] } },
+    { "day": 3, "time": "21:30", "assistant": "C", "question": "给我妈拿体检报告是哪天？",
+      "answer": { "type": "date", "value": "2026-10-14" } }
+  ]
+}
