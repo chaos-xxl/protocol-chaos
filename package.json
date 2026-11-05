@@ -38,11 +38,13 @@
   ],
   "scripts": {
     "start": "node server/index.mjs",
-    "test": "npm run test:server && npm run test:conformance && npm run test:hermes",
-    "test:server": "node --test server/test/store.test.mjs server/test/remote.test.mjs",
+    "test": "npm run test:server && npm run test:conformance && npm run test:eval && npm run test:hermes",
+    "test:server": "node --test server/test/store.test.mjs server/test/remote.test.mjs server/test/clock.test.mjs",
     "test:conformance": "node conformance/run.mjs --stdio \"node server/index.mjs --owner-tools --data {tmp}\"",
+    "test:eval": "node --test eval/test/*.test.mjs",
     "test:hermes": "python3 -m unittest discover -s integrations/hermes/tests",
     "conformance": "node conformance/run.mjs",
+    "eval": "node eval/cli.mjs",
     "prepublishOnly": "npm test"
   },
   "dependencies": {

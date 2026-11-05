@@ -16,6 +16,7 @@ import {
   parseNewStatement, parsePartialTime, parseSource, parseStatementText, parseText, parseTimestamp, parseTopic, parseUpdate,
   parseVia, partialTimeEnd, requireString, sameValue,
 } from './validate.mjs';
+import { currentTimeMs } from './clock.mjs';
 
 const clone = (v) => structuredClone(v);
 
@@ -113,7 +114,7 @@ export function entitySearch(repo, input) {
   }
   const kind = has(input, 'kind') ? parseKind(input.kind) : undefined;
   const limit = has(input, 'limit') ? parseCount(input.limit, 'limit', 1) : undefined;
-  const nowMs = Date.now();
+  const nowMs = currentTimeMs();
   const candidates = [...repo.entities.values()].filter((rec) => kind === undefined || rec.doc.kind === kind);
   let hits;
   if (query === undefined) {
@@ -165,7 +166,7 @@ export function entityGet(repo, input) {
   const includeHistory = has(input, 'includeHistory') ? parseBoolean(input.includeHistory, 'includeHistory') : false;
   const includeEvents = has(input, 'includeEvents') ? parseBoolean(input.includeEvents, 'includeEvents') : false;
   const rec = resolveEntity(repo, input.entityId);
-  const nowMs = Date.now();
+  const nowMs = currentTimeMs();
   let list = sortStatements(statementsOf(repo, rec));
   if (topics !== undefined) list = list.filter((s) => topics.includes(s.topic));
   const out = { entity: renderEntity(rec.doc) };

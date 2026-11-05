@@ -1,0 +1,21 @@
+{
+  "models": [
+    {
+      "id": "deepseek-flash",
+      "endpoint": "https://api.deepseek.com/chat/completions",
+      "apiKeyEnv": "EVAL_DEEPSEEK_KEY",
+      "model": "deepseek-flash",
+      "body": { "thinking": { "type": "disabled" }, "temperature": 1.0, "max_tokens": 4096 },
+      "concurrency": 8
+    },
+    {
+      "id": "deepseek-v4-pro",
+      "endpoint": "https://api.deepseek.com/chat/completions",
+      "apiKeyEnv": "EVAL_DEEPSEEK_KEY",
+      "model": "deepseek-v4-pro",
+      "body": { "thinking": { "type": "enabled" }, "max_tokens": 16384 },
+      "passback": ["reasoning_content"],
+      "concurrency": 4
+    }
+  ]
+}

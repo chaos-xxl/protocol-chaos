@@ -1,0 +1,74 @@
+{
+  "id": "d2-camping-inference",
+  "category": "D2",
+  "author": "kiro",
+  "shape": "A limit the user stated, and a looser one an assistant inferred and wrote down; later asked which was whose.",
+  "keywords": [
+    "露营"
+  ],
+  "variants": [
+    {
+      "budget": "1500",
+      "inferred": "2000"
+    }
+  ],
+  "seed": [
+    {
+      "key": "camping",
+      "title": "2026 年 10 月去露营",
+      "state": "active",
+      "facts": {
+        "goal": "10 月找个周末去露营一次。",
+        "constraint": "装备预算 {budget} 元以内；推测可以放宽到 {inferred} 元（依据：用户说过帐篷想买好一点的）。"
+      },
+      "accounts": [
+        {
+          "day": -12,
+          "assistant": "A",
+          "source": "user",
+          "text": "十月想找个周末去露营，装备预算 {budget} 以内。"
+        },
+        {
+          "day": -9,
+          "assistant": "B",
+          "source": "agent_response",
+          "text": "推测：装备预算可以放宽到 {inferred} 元（依据：用户说过帐篷想买好一点的）。"
+        }
+      ],
+      "organizedBy": {
+        "assistant": "B",
+        "day": -9
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "day": 1,
+      "assistant": "C",
+      "user": "露营定在这个月第三个周末，去山里那个营地。"
+    }
+  ],
+  "probes": [
+    {
+      "day": 4,
+      "assistant": "A",
+      "question": "露营装备可以花到 {inferred} 元，这个说法是谁、哪天记下的？是我自己说的，还是助手推测的？",
+      "answer": {
+        "type": "provenance",
+        "who": "B",
+        "day": -9,
+        "kind": "inference"
+      }
+    },
+    {
+      "day": 4,
+      "assistant": "C",
+      "question": "露营装备的预算，我自己说的是多少以内？",
+      "answer": {
+        "type": "number",
+        "value": "{budget}",
+        "unit": "元"
+      }
+    }
+  ]
+}

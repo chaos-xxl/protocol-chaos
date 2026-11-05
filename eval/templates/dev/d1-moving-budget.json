@@ -1,0 +1,54 @@
+{
+  "id": "d1-moving-budget",
+  "category": "D1",
+  "author": "kiro",
+  "shape": "One value of a matter changed twice, by two different assistants, a few days apart.",
+  "keywords": [
+    "搬家"
+  ],
+  "variants": [
+    {
+      "first": "20000",
+      "second": "25000",
+      "third": "23000"
+    },
+    {
+      "first": "8000",
+      "second": "12000",
+      "third": "10000"
+    }
+  ],
+  "sessions": [
+    {
+      "day": 0,
+      "assistant": "A",
+      "user": "下个月搬家，预算先定 {first} 元。"
+    },
+    {
+      "day": 3,
+      "assistant": "B",
+      "user": "搬家的预算改成 {second} 元吧，东西比想的多。"
+    },
+    {
+      "day": 6,
+      "assistant": "C",
+      "user": "搬家那件事，预算最后定成 {third} 元，不再改了。"
+    }
+  ],
+  "probes": [
+    {
+      "day": 9,
+      "assistant": "A",
+      "question": "我搬家的预算现在定的是多少？",
+      "answer": {
+        "type": "number",
+        "value": "{third}",
+        "unit": "元",
+        "stale": [
+          "{first}",
+          "{second}"
+        ]
+      }
+    }
+  ]
+}

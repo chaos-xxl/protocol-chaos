@@ -12,6 +12,7 @@ import {
   parseState, parseStateFilter, parseText, parseTimestamp, parseTitle, parseVia, requireString, sameValue,
 } from './validate.mjs';
 import { entityCreate, entityGet, entityRecord, entitySearch, exportEntities, validateEntitySnapshot } from './entities.mjs';
+import { currentTimeMs } from './clock.mjs';
 
 export const PROTOCOL_VERSION = 'draft-0.2';
 export const SCHEMA_VERSION = '0.3.0';
@@ -312,7 +313,7 @@ export class Repository {
   // Commit time: strictly later than any time issued before, so that
   // "most recently updated first" is exact (see directoryOrder).
   now() {
-    const t = Math.max(Date.now(), this.lastTime + 1);
+    const t = Math.max(currentTimeMs(), this.lastTime + 1);
     this.lastTime = t;
     return new Date(t).toISOString();
   }

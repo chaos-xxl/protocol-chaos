@@ -4,3 +4,6 @@ node_modules/
 *.tgz
 __pycache__/
 *.pyc
+# Experiment runs and local model lists (keys live in eval/.env.local, covered by *.local)
+eval/runs/
+*.local.json
