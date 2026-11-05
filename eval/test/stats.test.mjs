@@ -117,3 +117,17 @@ test('repetitions that disagree are counted', () => {
   ];
   assert.deepEqual(repAgreement(data, { model: 'm', arm: 'P' }), { items: 2, disagree: 1, share: 0.5 });
 });
+test('rows of a case run the infrastructure failed are left out, and counted', () => {
+  const base = { model: 'm', rep: 1, template: 't', probe: 'q1', category: 'D1' };
+  const all = [
+    { ...base, case: 'c1', arm: 'P', outcome: 'correct' },
+    { ...base, case: 'c1', arm: 'T1', outcome: 'wrong' },
+    { ...base, case: 'c2', arm: 'P', outcome: 'failed', infrastructure: true },
+    { ...base, case: 'c2', arm: 'T1', outcome: 'correct' },
+  ];
+  const result = paired(all, { model: 'm', armA: 'P', armB: 'T1', draws: 100 });
+  assert.equal(result.n, 1, 'the item P lost to the infrastructure is not paired');
+  assert.equal(result.diff, 1);
+  const table = categoryTable(all, { model: 'm', arms: ['P', 'T1'], categories: ['D1'] });
+  assert.deepEqual([table.D1.P.rows, table.D1.P.excluded, table.D1.P.failed], [1, 1, 0]);
+});

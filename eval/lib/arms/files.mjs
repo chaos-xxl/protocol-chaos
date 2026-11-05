@@ -32,7 +32,10 @@ const NAMES = new Set(TOOLS.map((t) => t.function.name));
 
 const fail = (text) => ({ text: `出错：${text}`, isError: true });
 const ok = (text) => ({ text, isError: false });
-const safe = (name) => typeof name === 'string' && /^[^/\\\u0000-\u001f]+\.md$/.test(name) && !name.startsWith('.') && name.length <= 120;
+// A file name the file system takes: at most 200 bytes, so that the temporary name of an atomic write fits too.
+const MAX_NAME_BYTES = 200;
+const tooLong = (name) => typeof name === 'string' && Buffer.byteLength(name) > MAX_NAME_BYTES;
+const safe = (name) => typeof name === 'string' && /^[^/\\\u0000-\u001f]+\.md$/.test(name) && !name.startsWith('.') && !tooLong(name);
 const occurrences = (text, part) => {
   let count = 0;
   for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + part.length)) count += 1;
@@ -70,6 +73,7 @@ export function notesTools(folder) {
       return ok(`${shown.map((h) => `${h.name}\n${h.lines.map((l) => `  ${l}`).join('\n')}`).join('\n\n')}${more}`);
     },
     notes_create({ path: name, content }) {
+      if (tooLong(name)) return fail('文件名太长了，起一个短一点的。');
       if (!safe(name)) return fail('path 要是一个 .md 文件名，不能带斜杠。');
       if (typeof content !== 'string') return fail('content 要给文件内容。');
       if (exists(name)) return fail(`${name} 已经存在；要改它，用 notes_str_replace 或 notes_append。`);
@@ -103,6 +107,8 @@ export const view = (index) => `## 笔记文件夹的 index.md\n\n这次对话�
 
 export default {
   name: 'T2',
+  /** A tool call as it is counted in a pilot: whether it was on index.md. */
+  label: (name, args) => (args?.path === INDEX ? `${name}:index` : name),
   /** Writes the starting store: a file per matter and index.md. */
   prepare(directory, matters) {
     const folder = join(directory, FOLDER);

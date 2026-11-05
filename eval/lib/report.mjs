@@ -73,7 +73,7 @@ export function analyze(records, { draws = 10_000, seed = 1 } = {}) {
       for (const size of [10, 50, 150]) {
         scale[category][size] = {};
         for (const arm of ARMS) {
-          const list = rows.filter((r) => r.model === model && r.arm === arm && r.category === category
+          const list = rows.filter((r) => r.model === model && r.arm === arm && r.category === category && !r.infrastructure
             && (size === 150 ? !r.scale && chosen.has(r.case) : r.scale && r.library === size));
           scale[category][size][arm] = { rows: list.length, accuracy: list.length ? list.filter((r) => r.outcome === 'correct').length / list.length : NaN };
         }
@@ -88,6 +88,7 @@ export function analyze(records, { draws = 10_000, seed = 1 } = {}) {
       agreement: Object.fromEntries(ARMS.map((arm) => [arm, repAgreement(rows, { model, arm, filter: main })])),
       cost: cost(records, model),
       correct: Object.fromEntries(ARMS.map((arm) => [arm, rows.filter((r) => r.model === model && r.arm === arm && r.outcome === 'correct').length])),
+      excluded: Object.fromEntries(ARMS.map((arm) => [arm, records.filter((r) => r.model === model && r.arm === arm && r.infrastructure).length])),
     };
   }
   const adjusted = holm(Object.fromEntries(models.map((m) => [m, perModel[m].primary.p])));
@@ -102,6 +103,8 @@ export function renderReport(analysis, manifest = {}) {
   for (const model of analysis.models) {
     const m = analysis.perModel[model];
     lines.push(`## ${model}`, '');
+    const left = ARMS.filter((arm) => m.excluded[arm]).map((arm) => `${arm} ${m.excluded[arm]}`);
+    lines.push(`Case runs left out because the infrastructure kept failing: ${left.length ? left.join(', ') : 'none'}.`, '');
     lines.push('### Primary: P against each text arm on D1–D6', '');
     lines.push('| Comparison | Items | Templates | P | Text | Difference (points) | 95% interval | One-sided p | McNemar by repetition |', '|---|---|---|---|---|---|---|---|---|');
     for (const c of m.primary.comparisons) {

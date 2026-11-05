@@ -16,6 +16,12 @@ import { copyDirectory, writeJson } from './util.mjs';
 
 export const ARMS = { P, T1, T2 };
 
+/**
+ * The endpoint or a local server failed, not the model: the case run is repeated, and if it
+ * keeps failing it is left out of the analysis rather than scored.
+ */
+export class InfrastructureError extends Error {}
+
 /** The matters a case starts from: the first `library` matters of the library, then its seeds. */
 export const caseMatters = (library, caseDef) => [...library.slice(0, caseDef.library), ...caseDef.seeds];
 
@@ -47,7 +53,12 @@ export async function runCase({ caseDef, arm: armName, model, rep, provider, lib
   const conversations = [];
 
   const talk = async (kind, name, at, user, storeDir) => {
-    const handle = await arm.open(storeDir, { ...at, meta });
+    let handle;
+    try {
+      handle = await arm.open(storeDir, { ...at, meta });
+    } catch (error) {
+      throw new InfrastructureError(`${name}: the store could not be opened: ${error.message}`);
+    }
     let result;
     let system;
     try {
@@ -60,11 +71,13 @@ export async function runCase({ caseDef, arm: armName, model, rep, provider, lib
     const summary = {
       kind, name, date: at.date, time: at.time, assistant: at.assistant, ok: result.ok, error: result.error ?? null,
       toolCalls: result.toolCalls, toolErrors: result.toolErrors, systemChars: system.length, ...counts,
+      calls: result.calls.map((call) => ({ tool: arm.label(call.name, call.args), error: call.error })),
       models: [...new Set(result.requests.map((r) => r.model).filter(Boolean))],
       fingerprints: [...new Set(result.requests.map((r) => r.fingerprint).filter(Boolean))],
     };
     saveConversation(join(directory, 'conversations'), name, { ...summary, system, messages: result.messages.slice(1), requests: result.requests });
     conversations.push(summary);
+    if (result.infrastructure) throw new InfrastructureError(`${name}: ${result.error}`);
     return result;
   };
 

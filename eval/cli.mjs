@@ -6,10 +6,13 @@
 //       case's three starting stores hold the same information. Costs nothing.
 //   node --env-file=eval/.env.local eval/cli.mjs run --split dev [--models eval/models.local.json]
 //       [--model ID ...] [--reps 2] [--arms P,T1,T2] [--cases PREFIX] [--scale] [--out DIR]
-//       [--resume DIR] [--dry] [--concurrency N] [--allow-dirty]
-//       Runs the cases. --dry plays the model with a stand-in (no network, no cost).
-//   node eval/cli.mjs report RUN_DIR
-//       Writes results.jsonl, summary.json, report.md and the review packet.
+//       [--resume DIR] [--dry] [--concurrency N] [--allow-dirty] [--blind]
+//       Runs the cases. --dry plays the model with a stand-in (no network, no cost). --blind
+//       is for a pilot: it writes only the blind report (no accuracy by arm), see lib/pilot.mjs.
+//       --resume continues a run, repeating the case runs the infrastructure failed.
+//   node eval/cli.mjs report RUN_DIR [--blind]
+//       Writes results.jsonl, summary.json, report.md and the review packet; with --blind,
+//       pilot-report.md, pilot.json and the review packet without its key.
 //   node eval/cli.mjs d7 [--out FILE]
 //       The deterministic demonstration of two assistants writing at once.
 //   node --env-file=eval/.env.local eval/cli.mjs models --gateway eval/gateway.local.json
@@ -22,19 +25,26 @@ import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { ARMS, caseMatters, runCase, verifyCase } from './lib/case.mjs';
+import { ARMS, InfrastructureError, caseMatters, runCase, verifyCase } from './lib/case.mjs';
 import { describeLibrary } from './lib/library.mjs';
 import { SPLITS, TEMPLATES, material } from './lib/material.mjs';
 import { loadPrompts, systemPrompt } from './lib/prompts.mjs';
 import { checkModel, createProvider, listModels } from './lib/provider.mjs';
 import { rehearsalProvider } from './lib/rehearsal.mjs';
+import { pilotAnalysis, renderPilot } from './lib/pilot.mjs';
 import { analyze, collect, renderReport, reviewPacket } from './lib/report.mjs';
 import { modelFromGateway, renderScreen, screen } from './lib/screen.mjs';
 import { scaleCases } from './lib/templates.mjs';
-import { random, readJson, runLimited, seedOf, sha256, shuffle, writeFileAtomic, writeJson } from './lib/util.mjs';
+import { pause, random, readJson, runLimited, seedOf, sha256, shuffle, writeFileAtomic, writeJson } from './lib/util.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const EVAL = join(ROOT, 'eval');
+// A case run the infrastructure failed is tried again, after a pause that grows; after this many
+// tries it is recorded as the infrastructure's. After this many such case runs in a row the run
+// stops, to be resumed once the endpoint is back.
+const INFRA_ATTEMPTS = 4;
+const INFRA_PAUSE_MS = 60_000;
+const INFRA_STREAK_STOP = 3;
 
 const say = (text) => process.stderr.write(`${text}\n`);
 function fail(message) {
@@ -176,31 +186,61 @@ async function run(values) {
       }
     }
     let done = 0;
+    let streak = 0;
+    let stopped = false;
     const started = Date.now();
     await runLimited(jobs.map((job) => async () => {
-      if (existsSync(join(job.directory, 'result.json'))) {
+      const resultFile = join(job.directory, 'result.json');
+      if (existsSync(resultFile) && !readJson(resultFile).infrastructure) {
         done += 1;
         return;
       }
-      try {
-        await runCase({ ...job, model, provider, library, prompts, runTag: basename(out) });
-      } catch (error) {
-        // A case that could not run at all (a server that did not start, a store that could not be written) still counts:
-        // each of its probes is a failure.
-        writeJson(join(job.directory, 'result.json'), {
-          case: job.caseDef.id, arm: job.arm, model: model.id, rep: job.rep, error: error.message, conversations: [],
-          rows: job.caseDef.probes.map((probe) => ({
-            model: model.id, rep: job.rep, template: job.caseDef.template, case: job.caseDef.id, probe: probe.id, category: job.caseDef.category,
-            arm: job.arm, library: job.caseDef.library, scale: Boolean(job.caseDef.scale), author: job.caseDef.author, question: probe.question,
-            gold: probe.answer, outcome: 'failed', value: null, normalized: null, method: `case: ${error.message}`, reply: null,
-          })),
-        });
+      if (stopped) return;
+      // The endpoint or a local server failing is retried with the whole case run, after a pause; a case run that
+      // keeps failing that way is recorded as such and left out of the analysis. Any other error is a harness bug:
+      // it is recorded and counted as failed, so it cannot hide.
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          await runCase({ ...job, model, provider, library, prompts, runTag: basename(out) });
+          streak = 0;
+          break;
+        } catch (error) {
+          const infrastructure = error instanceof InfrastructureError;
+          if (infrastructure && attempt < INFRA_ATTEMPTS && !stopped) {
+            say(`${model.id}: ${job.caseDef.id} ${job.arm} rep ${job.rep}: ${error.message.slice(0, 160)}; trying the case again (${attempt + 1}/${INFRA_ATTEMPTS})`);
+            await pause(INFRA_PAUSE_MS * attempt);
+            continue;
+          }
+          writeJson(join(job.directory, 'result.json'), {
+            case: job.caseDef.id, arm: job.arm, model: model.id, rep: job.rep, error: error.message, infrastructure, conversations: [],
+            rows: job.caseDef.probes.map((probe) => ({
+              model: model.id, rep: job.rep, template: job.caseDef.template, case: job.caseDef.id, probe: probe.id, category: job.caseDef.category,
+              arm: job.arm, library: job.caseDef.library, scale: Boolean(job.caseDef.scale), author: job.caseDef.author, question: probe.question,
+              gold: probe.answer, outcome: 'failed', infrastructure, value: null, normalized: null,
+              method: `${infrastructure ? 'infrastructure' : 'harness'}: ${error.message}`, reply: null,
+            })),
+          });
+          if (infrastructure) {
+            streak += 1;
+            if (streak >= INFRA_STREAK_STOP && !stopped) {
+              stopped = true;
+              say(`${model.id}: ${streak} case runs in a row failed on the infrastructure; stopping. Resume with --resume ${out}`);
+            }
+          } else {
+            say(`${model.id}: ${job.caseDef.id} ${job.arm} rep ${job.rep}: a harness error: ${error.message.slice(0, 300)}`);
+          }
+          break;
+        }
       }
       done += 1;
       if (done % 10 === 0 || done === jobs.length) say(`${model.id}: ${done}/${jobs.length} case runs, ${Math.round((Date.now() - started) / 1000)} s`);
     }), concurrency);
+    if (stopped) {
+      (values.blind ? pilot : report)(out);
+      fail(`Stopped: the infrastructure kept failing. Resume with: --resume ${out}`);
+    }
   }
-  report(out);
+  (values.blind ? pilot : report)(out);
 }
 
 // ---- report ----
@@ -218,6 +258,21 @@ function report(runDir) {
   writeJson(join(dir, 'review-packet.json'), packet.entries);
   writeJson(join(dir, 'review-key.json'), packet.key);
   say(`Report: ${join(dir, 'report.md')} (${analysis.rows} probe results, ${packet.entries.length} answers to review)`);
+}
+
+/** The blind report of a pilot: nothing that shows how the arms compare (lib/pilot.mjs). */
+function pilot(runDir) {
+  const dir = resolve(runDir);
+  const records = collect(dir);
+  if (records.length === 0) fail(`No results under ${dir}`);
+  const manifest = existsSync(join(dir, 'manifest.json')) ? readJson(join(dir, 'manifest.json')) : {};
+  const analysis = pilotAnalysis(records);
+  writeJson(join(dir, 'pilot.json'), { manifest, ...analysis });
+  writeFileAtomic(join(dir, 'pilot-report.md'), renderPilot(analysis, manifest));
+  // The entries carry no arm; the key that maps them back is not written until the pilot is over.
+  const packet = reviewPacket(records.filter((r) => !r.infrastructure));
+  writeJson(join(dir, 'review-packet.json'), packet.entries);
+  say(`Pilot report: ${join(dir, 'pilot-report.md')} (${records.length} case runs, ${packet.entries.length} answers to review)`);
 }
 
 // ---- preview: the system prompt of one conversation, for reviewing prompts ----
@@ -290,13 +345,13 @@ const { values, positionals } = parseArgs({
     split: { type: 'string' }, models: { type: 'string' }, model: { type: 'string', multiple: true }, reps: { type: 'string' },
     arms: { type: 'string' }, cases: { type: 'string' }, case: { type: 'string' }, scale: { type: 'boolean' }, out: { type: 'string' },
     resume: { type: 'string' }, dry: { type: 'boolean' }, concurrency: { type: 'string' }, 'allow-dirty': { type: 'boolean' },
-    gateway: { type: 'string' }, candidates: { type: 'string' },
+    gateway: { type: 'string' }, candidates: { type: 'string' }, blind: { type: 'boolean' },
   },
 });
 const [command, ...rest] = positionals;
 if (command === 'validate') validate(values);
 else if (command === 'run') await run(values);
-else if (command === 'report') report(rest[0] ?? fail('report needs the run directory'));
+else if (command === 'report') (values.blind ? pilot : report)(rest[0] ?? fail('report needs the run directory'));
 else if (command === 'preview') await preview(values);
 else if (command === 'd7') await (await import('./lib/d7.mjs')).main(values);
 else if (command === 'models') await models(values);

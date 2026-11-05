@@ -1,8 +1,10 @@
 // The analysis. Rows are probe results {model, rep, template, case, probe, category, arm,
 // outcome}; an item is (case, probe) within one model, and it scores the share of its
 // repetitions that were correct. Every outcome other than correct scores 0, failures
-// included: nothing is dropped. Templates are the unit of resampling, because cases made
-// from one template are not independent.
+// included: nothing the model did is dropped. Only a case run the infrastructure kept
+// failing (rows marked `infrastructure`, see session.mjs) is left out, and counted in the
+// report. Templates are the unit of resampling, because cases made from one template are
+// not independent.
 import { random } from './util.mjs';
 
 const correct = (row) => (row.outcome === 'correct' ? 1 : 0);
@@ -12,7 +14,7 @@ const itemKey = (row) => `${row.case}|${row.probe}`;
 export function itemScores(rows, { model, arm, categories, filter }) {
   const items = new Map();
   for (const row of rows) {
-    if (row.model !== model || row.arm !== arm) continue;
+    if (row.model !== model || row.arm !== arm || row.infrastructure) continue;
     if (categories && !categories.includes(row.category)) continue;
     if (filter && !filter(row)) continue;
     const key = itemKey(row);
@@ -174,16 +176,17 @@ export function holm(pvalues) {
   return Object.fromEntries(entries.map(([key]) => [key, adjusted.get(key)]));
 }
 
-/** Outcome counts and accuracy per category and arm (rows counted per repetition). */
+/** Outcome counts and accuracy per category and arm (rows counted per repetition); `excluded` counts the infrastructure's rows. */
 export function categoryTable(rows, { model, arms, categories, filter }) {
   const table = {};
   for (const category of categories) {
     table[category] = {};
     for (const arm of arms) {
-      const list = rows.filter((r) => r.model === model && r.arm === arm && r.category === category && (!filter || filter(r)));
+      const all = rows.filter((r) => r.model === model && r.arm === arm && r.category === category && (!filter || filter(r)));
+      const list = all.filter((r) => !r.infrastructure);
       const counts = Object.fromEntries(['correct', 'stale', 'wrong', 'unknown', 'unparseable', 'failed'].map((o) => [o, list.filter((r) => r.outcome === o).length]));
       const confused = list.filter((r) => r.detail === 'confused').length;
-      table[category][arm] = { rows: list.length, ...counts, confused, accuracy: list.length ? counts.correct / list.length : NaN };
+      table[category][arm] = { rows: list.length, ...counts, confused, excluded: all.length - list.length, accuracy: list.length ? counts.correct / list.length : NaN };
     }
   }
   return table;

@@ -80,6 +80,11 @@ async function connect(url, token) {
 
 export default {
   name: 'P',
+  /** A tool call as it is counted in a pilot: event_note says whether it continued a matter or started one. */
+  label(name, args) {
+    if (name !== 'event_note') return name;
+    return `event_note:${args?.eventId ? 'continue' : args?.parentEventId ? 'new-under' : 'new'}`;
+  },
   /** Writes repository.json and one token per assistant (kept only in memory; clients.json holds their hashes). */
   prepare(directory, matters) {
     writeRepository(matters, directory);

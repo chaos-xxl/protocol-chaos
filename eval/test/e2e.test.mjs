@@ -10,6 +10,7 @@ import { runCase } from '../lib/case.mjs';
 import { generateLibrary } from '../lib/library.mjs';
 import { loadPrompts } from '../lib/prompts.mjs';
 import { createScriptedProvider } from '../lib/provider.mjs';
+import { pilotAnalysis, renderPilot } from '../lib/pilot.mjs';
 import { analyze, renderReport } from '../lib/report.mjs';
 import { expandTemplate } from '../lib/templates.mjs';
 import { readRepository } from '../lib/p-writer.mjs';
@@ -82,4 +83,20 @@ test('a case runs in every arm, each probe on its own copy, and the report count
   assert.deepEqual([table.P.correct, table.T1.stale, table.T2.unknown], [2, 2, 2]);
   assert.equal(analysis.perModel.scripted.primary.comparisons[0].diff, 1);
   assert.match(renderReport(analysis), /\| D1 \| P \| 2 \| 2 \| 0 \| 0 \| 0 \| 0 \| 0 \| 100\.0% \|/);
+
+  // The blind report pools the arms: two of six answers right, and nothing by arm but how the conversations went.
+  const pilot = pilotAnalysis(records);
+  const m = pilot.perModel.scripted;
+  assert.deepEqual([m.pooled.rows, m.pooled.correct, m.pooled.stale, m.pooled.unknown], [6, 2, 2, 2]);
+  assert.equal(m.mechanics.P.sessions.tools['event_note:new'], 2);
+  assert.equal(m.mechanics.T1.sessions.tools['memory:add'], 2);
+  assert.equal(m.mechanics.T2.sessions.tools['notes_append:index'], 2);
+  assert.equal(m.mechanics.T2.probes.tools.notes_create, 1);
+  for (const arm of ['P', 'T1', 'T2']) {
+    const text = JSON.stringify(m.mechanics[arm]);
+    assert.ok(!/"(correct|stale|wrong|unknown|accuracy)"/.test(text), `no outcome by arm in ${arm}`);
+  }
+  const md = renderPilot(pilot);
+  assert.match(md, /\| D1 \| 1 \| 6 \| 2 \| 2 \| 0 \| 2 \| 0 \| 0 \| 33\.3% \|/);
+  assert.ok(!/P vs|\| P \| \d+ \| \d+ \| \d+ \| \d+ \| \d+ \| \d+ \| [\d.]+% \|/.test(md));
 });

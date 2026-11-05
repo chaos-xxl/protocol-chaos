@@ -75,6 +75,8 @@ export function view(entries) {
 
 export default {
   name: 'T1',
+  /** A tool call as it is counted in a pilot: memory with its action. */
+  label: (name, args) => (name === 'memory' ? `memory:${typeof args?.action === 'string' ? args.action : '?'}` : name),
   /** Writes the starting store: one entry per matter. */
   prepare(directory, matters) {
     writeJson(join(directory, FILE), { entries: renderEntries(matters) }, 0o600);
