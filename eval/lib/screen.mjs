@@ -33,7 +33,7 @@ export function modelFromGateway(gateway, name) {
     ...(gateway.conversationHeader ? { conversationHeader: gateway.conversationHeader } : {}),
     ...(gateway.requestIdHeader ? { requestIdHeader: gateway.requestIdHeader } : {}),
     body: { ...(gateway.body ?? {}), ...(gateway.models?.[name]?.body ?? {}) },
-    passback: gateway.models?.[name]?.passback ?? [],
+    passback: gateway.models?.[name]?.passback ?? (anthropic ? [] : gateway.passback ?? []),
     concurrency: gateway.concurrency ?? 4,
     timeoutMs: gateway.timeoutMs ?? 180_000,
     maxRetries: gateway.maxRetries ?? 3,
@@ -98,7 +98,7 @@ export async function screenModel(model, { library, caseDef, prompts, out, provi
     recordsAndOrganizes: Boolean(p1.ok && p1.tools?.includes('event_note') && p1.tools?.includes('event_record_expression')),
     writesFiles: Boolean(c.T2?.ok && c.T2.tools?.some((t) => ['notes_create', 'notes_str_replace', 'notes_append'].includes(t))),
     answersInFormat: Boolean(c.Q?.ok && c.Q.outcome !== 'unparseable' && c.Q.outcome !== 'failed'),
-    reportsUsage: Object.values(c).every((x) => x.input !== null && x.output !== null),
+    reportsUsage: Object.values(c).some((x) => x.requests > 0) ? Object.values(c).filter((x) => x.requests > 0).every((x) => x.input !== null && x.output !== null) : null,
     reportsCache: c.P2?.firstCached === null || c.P2?.firstCached === undefined ? null : c.P2.firstCached > 0,
   };
   return record;

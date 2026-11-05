@@ -253,13 +253,18 @@ function gatewayOf(values) {
 async function models(values) {
   const gateway = gatewayOf(values);
   const list = await listModels({ base: gateway.modelsBase, key: process.env[gateway.apiKeyEnv] });
+  // A gateway that serves one model through several providers names the provider in owned_by;
+  // the name to call is then <owned_by>/<id>.
+  const nameOf = (m) => (gateway.nameByOwner && m.owned_by ? `${m.owned_by}/${m.id}` : m.id);
   const byProvider = new Map();
   for (const m of list) {
-    const provider = m.id.includes('/') ? m.id.slice(0, m.id.indexOf('/')) : '(none)';
-    byProvider.set(provider, [...(byProvider.get(provider) ?? []), m.id]);
+    if (m.model_type && m.model_type !== 'llm') continue;
+    const name = nameOf(m);
+    const provider = name.includes('/') ? name.slice(0, name.indexOf('/')) : '(none)';
+    byProvider.set(provider, [...new Set([...(byProvider.get(provider) ?? []), name])]);
   }
-  const lines = [...byProvider].sort().map(([provider, ids]) => `${provider} (${ids.length}):\n  ${ids.sort().join('\n  ')}`);
-  process.stdout.write(`${list.length} models\n${lines.join('\n')}\n`);
+  const lines = [...byProvider].sort().map(([provider, names]) => `${provider} (${names.length}):\n  ${names.sort().join('\n  ')}`);
+  process.stdout.write(`${list.length} models listed; language models by provider:\n${lines.join('\n')}\n`);
   if (values.out) writeJson(resolve(values.out), list);
 }
 
