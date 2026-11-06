@@ -1,10 +1,18 @@
 # Protocol Chaos for Hermes
 
+Tell any of your assistants about a plan, a change or a decision, and Hermes knows it too.
 Your long-lived matters (a trip next spring, a renovation, a job search, a five-year goal) live
-on your own [Protocol Chaos](https://github.com/chaos-xxl/protocol-chaos) server, where every
-assistant you use can read and add to them. This plugin connects
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) to that server so that the
-repository never holds up a reply:
+on your own [Protocol Chaos](https://github.com/chaos-xxl/protocol-chaos) server, which Hermes
+and your other assistants (Codex, Claude Code, Kiro, anything that can use an MCP server) all
+read and write. Each records what you tell it. Once a day Hermes folds everything they
+recorded into one record per matter: where it stands, what it is for, its limits and plan, and
+who said what, when.
+
+It is not a memory provider and does not replace yours: it runs beside it. Your matters stay on
+your server, and the server never sees your messages, only the words recorded from them.
+
+This plugin connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to that
+server, and the repository never holds up a reply:
 
 - **Before the model answers.** When a session starts, an overview of your open matters goes
   into the system prompt. On each message, the plugin compares the message with the matters'
@@ -17,9 +25,20 @@ repository never holds up a reply:
   progress, state and the people and places involved, grounded on the words just recorded and
   read with the last few messages of the conversation, so that "let's take the second option"
   is understood. The next turn, and every other assistant on your server, sees the change.
-- **Once a day.** A bundled skill, `protocol-chaos:organizer`, does the rest: it links parts
-  to the matters they belong to, merges duplicates, and keeps records of the people and
-  places you mention. Turn it on with `/blueprint protocol-chaos:organizer`.
+- **Once a day.** A bundled skill, `protocol-chaos:organizer`, reads what all your assistants
+  recorded that day and organizes it: it completes each matter's fields, links parts to the
+  matters they belong to, merges duplicates, and keeps records of the people and places you
+  mention. Turn it on with `/blueprint protocol-chaos:organizer`.
+
+**One week, measured.** The author used it for a week on draft 0.2, with four assistants
+sharing one server. 45 entries were recorded, 41 of them by assistants other than Hermes. Of
+the 45, 29 were the author's own words, 15 the assistants' notes on what they did, and 1 a copy
+the organizer made. Of the organizer's 54 changes, 46 rested on words another assistant had
+recorded; checked one by one, no wrong fact was found. In conversation, on the one afternoon
+it was used, Hermes recorded 3 entries and made 11 changes, 5 of which put the details of one
+breakdown on the long-lived matter above it; 0.3.0 records such an episode on a part of its
+own. Nothing was lost or edited across nine daily backups. One person, one week: an
+observation, not a benchmark.
 
 Everything fails open: if the server is unreachable or answers with an error, the turn goes on
 as it would without the plugin. The plugin logs ids, counts, times and token counts, never what
@@ -47,6 +66,12 @@ long-lived matter.
 - Nothing else. No telemetry, no other network calls, no files read outside the plugin's own
   directory. One short-lived background thread per message it considers recording: one model
   call to decide, and one more when it records.
+- **What Hermes keeps.** Hermes saves the context the plugin adds to a turn with that turn in
+  its session database and sends it again on later turns of the session, as it does with any
+  plugin's added context
+  ([hermes-agent#143739](https://github.com/NousResearch/hermes-agent/issues/143739)). The
+  details of the matters a turn named therefore stay in Hermes's session history, and its
+  background memory review reads them along with the rest of the conversation.
 
 ## Requirements
 
