@@ -61,15 +61,21 @@ export function stopServer(child) {
 /** The one text item of a tool result. */
 const textOf = (result) => (result.content ?? []).filter((item) => item.type === 'text').map((item) => item.text).join('\n');
 
-/** The directory as lines, one per Event, with everything context_pack returns. */
-export function renderDirectory(events) {
+/**
+ * The directory as lines, one per Event, with everything context_pack returns. `order`
+ * "recent" keeps the server's order, most recently updated first; "id" sorts by id, so that
+ * the lines of Events that did not change stay where they were and a prompt cache can reuse them.
+ */
+export function renderDirectory(events, order = 'recent') {
   if (events.length === 0) return '## 事情目录\n\n（库里还没有任何事情）';
-  const lines = events.map((e) => {
+  const listed = order === 'id' ? [...events].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) : events;
+  const lines = listed.map((e) => {
     const parts = [e.id, e.title ?? '（无标题）', e.state, `上级：${e.parents.length ? e.parents.join('、') : '无'}`, `更新：${beijingDate(e.updatedAt)}`];
     if (e.progress) parts.push(`进展（${beijingDate(e.progress.timestamp)}）：${e.progress.text}`);
     return `- ${parts.join('｜')}`;
   });
-  return `## 事情目录\n\n这次对话开始时库里的全部事情，共 ${events.length} 件，最近更新的在前。每行：id｜标题｜状态｜上级｜最后更新｜进展。\n\n${lines.join('\n')}`;
+  const sorted = order === 'id' ? '按 id 排列' : '最近更新的在前';
+  return `## 事情目录\n\n这次对话开始时库里的全部事情，共 ${events.length} 件，${sorted}。每行：id｜标题｜状态｜上级｜最后更新｜进展。\n\n${lines.join('\n')}`;
 }
 
 /** Connects as one assistant; returns {client, close}. */
@@ -80,10 +86,11 @@ async function connect(url, token) {
   return client;
 }
 
-/** The P arm with a tool profile of the server's (--tools). */
-export const protocolArm = ({ tools = 'writer' } = {}) => ({
+/** The P arm with a tool profile of the server's (--tools) and a directory order (renderDirectory). */
+export const protocolArm = ({ tools = 'writer', order = 'recent' } = {}) => ({
   name: 'P',
   tools,
+  order,
   /** A tool call as it is counted in a pilot: event_note says whether it continued a matter or started one. */
   label(name, args) {
     if (name !== 'event_note') return name;
@@ -115,7 +122,7 @@ export const protocolArm = ({ tools = 'writer' } = {}) => ({
       const names = new Set(tools.map((t) => t.name));
       return {
         tools: tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.inputSchema } })),
-        view: renderDirectory(events),
+        view: renderDirectory(events, order),
         has: (name) => names.has(name),
         async call(name, args) {
           const result = await client.callTool({ name, arguments: args ?? {} });

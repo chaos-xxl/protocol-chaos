@@ -100,3 +100,18 @@ test('a case runs in every arm, each probe on its own copy, and the report count
   assert.match(md, /\| D1 \| 1 \| 6 \| 2 \| 2 \| 0 \| 2 \| 0 \| 0 \| 33\.3% \|/);
   assert.ok(!/P vs|\| P \| \d+ \| \d+ \| \d+ \| \d+ \| \d+ \| \d+ \| [\d.]+% \|/.test(md));
 });
+
+test('a reader model answers the probes; the writer only records', async () => {
+  const [caseDef] = expandTemplate(template, { split: 'dev' });
+  const library = generateLibrary({ reserved: template.keywords });
+  const asked = [];
+  const reader = createScriptedProvider(({ messages }) => {
+    asked.push(messages[1].content);
+    return { content: 'ANSWER: 25000' };
+  }, { id: 'reader' });
+  const record = await runCase({ caseDef, arm: 'T2', model: { id: 'scripted' }, rep: 1, provider, readerProvider: reader, reader: 'reader', library, directory: join(root, 'reader-T2'), prompts: loadPrompts() });
+  assert.equal(asked.length, 2, 'the reader got both probes and nothing else');
+  assert.ok(asked.every((message) => message.includes('回答格式：')));
+  assert.deepEqual(record.rows.map((row) => [row.reader, row.outcome]), [['reader', 'correct'], ['reader', 'correct']]);
+  assert.equal(record.reader, 'reader');
+});

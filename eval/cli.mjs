@@ -6,10 +6,13 @@
 //       case's three starting stores hold the same information. Costs nothing.
 //   node --env-file=eval/.env.local eval/cli.mjs run --split dev [--models eval/models.local.json]
 //       [--model ID ...] [--reps 2] [--arms P,T1,T2] [--cases PREFIX] [--scale] [--out DIR]
-//       [--resume DIR] [--dry] [--concurrency N] [--allow-dirty] [--blind]
+//       [--resume DIR] [--dry] [--concurrency N] [--allow-dirty] [--blind] [--reader ID]
 //       Runs the cases. --dry plays the model with a stand-in (no network, no cost). --blind
 //       is for a pilot: it writes only the blind report (no accuracy by arm), see lib/pilot.mjs.
 //       --resume continues a run, repeating the case runs the infrastructure failed.
+//       --reader answers every probe with that model of the list instead of the writer's, so
+//       that what differs is how the store was written, not how well it is read.
+//       --p-directory id lists P's directory by id instead of most recently updated first.
 //   node eval/cli.mjs report RUN_DIR [--blind]
 //       Writes results.jsonl, summary.json, report.md and the review packet; with --blind,
 //       pilot-report.md, pilot.json and the review packet without its key.
@@ -29,6 +32,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { protocolArm } from './lib/arms/protocol.mjs';
 import { ARMS, InfrastructureError, caseMatters, runCase, verifyCase } from './lib/case.mjs';
 import { describeLibrary } from './lib/library.mjs';
 import { SPLITS, TEMPLATES, material } from './lib/material.mjs';
@@ -131,6 +135,9 @@ async function run(values) {
   }
   const arms = (values.arms ?? 'P,T1,T2').split(',');
   if (!arms.every((a) => ARMS[a])) fail('--arms takes P, T1 and T2');
+  const pDirectory = values['p-directory'] ?? 'recent';
+  if (!['recent', 'id'].includes(pDirectory)) fail('--p-directory is recent or id');
+  const pArm = protocolArm({ order: pDirectory });
   const reps = Number(values.reps ?? 2);
   if (!Number.isInteger(reps) || reps < 1 || reps > 10) fail('--reps must be 1 to 10');
 
@@ -141,14 +148,16 @@ async function run(values) {
   if (cases.length === 0) fail('No cases to run.');
 
   let models;
+  let reader = null;
   if (values.dry) {
     models = [{ id: 'rehearsal', model: 'rehearsal', endpoint: 'http://127.0.0.1/', concurrency: Number(values.concurrency ?? 4) }];
   } else {
     const file = resolve(values.models ?? join(EVAL, 'models.local.json'));
     if (!existsSync(file)) fail(`No model list at ${file}. Copy eval/models.example.json to eval/models.local.json and fill it in.`);
-    models = readJson(file).models.map(checkModel);
-    if (values.model?.length) models = models.filter((m) => values.model.includes(m.id));
+    const listed = readJson(file).models.map(checkModel);
+    models = values.model?.length ? listed.filter((m) => values.model.includes(m.id)) : listed;
     if (models.length === 0) fail('No model selected.');
+    if (values.reader) reader = listed.find((m) => m.id === values.reader) ?? fail(`No model ${values.reader} in ${file}.`);
   }
 
   const out = resolve(values.resume ?? values.out ?? join(EVAL, 'runs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${split}`));
@@ -156,8 +165,9 @@ async function run(values) {
   const manifestFile = join(out, 'manifest.json');
   const manifest = {
     startedAt: new Date().toISOString(),
-    split, reps, arms, dry: Boolean(values.dry), git, node: process.version,
+    split, reps, arms, pDirectory, dry: Boolean(values.dry), git, node: process.version,
     models: models.map(({ id, model, endpoint, body, passback, concurrency }) => ({ id, model, endpoint: endpoint ? new URL(endpoint).origin : null, body: body ?? {}, passback: passback ?? [], concurrency })),
+    reader: reader ? { id: reader.id, model: reader.model, endpoint: new URL(reader.endpoint).origin, body: reader.body ?? {}, passback: reader.passback ?? [] } : null,
     prompts: prompts.hashes,
     hashes: {
       templates: hashFiles(listFiles(TEMPLATES, (n) => n.endsWith('.json'))),
@@ -178,6 +188,7 @@ async function run(values) {
     writeJson(join(out, 'library.json'), library);
   }
 
+  const readerProvider = reader ? createProvider(reader) : undefined;
   for (const model of models) {
     const provider = values.dry ? rehearsalProvider() : createProvider(model);
     const concurrency = Number(values.concurrency ?? model.concurrency ?? 4);
@@ -206,7 +217,7 @@ async function run(values) {
       // it is recorded and counted as failed, so it cannot hide.
       for (let attempt = 1; ; attempt += 1) {
         try {
-          await runCase({ ...job, model, provider, library, prompts, runTag: basename(out) });
+          await runCase({ ...job, armImpl: job.arm === 'P' ? pArm : undefined, model, provider, readerProvider, reader: reader?.id, library, prompts, runTag: basename(out) });
           streak = 0;
           break;
         } catch (error) {
@@ -361,7 +372,7 @@ const { values, positionals } = parseArgs({
     split: { type: 'string' }, models: { type: 'string' }, model: { type: 'string', multiple: true }, reps: { type: 'string' },
     arms: { type: 'string' }, cases: { type: 'string' }, case: { type: 'string' }, scale: { type: 'boolean' }, out: { type: 'string' },
     resume: { type: 'string' }, dry: { type: 'boolean' }, concurrency: { type: 'string' }, 'allow-dirty': { type: 'boolean' },
-    gateway: { type: 'string' }, candidates: { type: 'string' }, blind: { type: 'boolean' },
+    gateway: { type: 'string' }, candidates: { type: 'string' }, blind: { type: 'boolean' }, reader: { type: 'string' }, 'p-directory': { type: 'string' },
   },
 });
 const [command, ...rest] = positionals;

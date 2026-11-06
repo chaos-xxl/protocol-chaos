@@ -92,3 +92,15 @@ test('P: over HTTP each assistant writes as itself, with versions, at the simula
   const raw = JSON.parse(readFileSync(join(dir, 'repository.json'), 'utf8'));
   assert.equal(raw.events[0].accounts.at(-1).createdAt, '2026-10-08T01:30:00.000Z', '09:30 in Beijing');
 });
+
+test('P directory: the server\'s order, or by id so that unchanged lines stay in place', async () => {
+  const { renderDirectory } = await import('../lib/arms/protocol.mjs');
+  const events = [
+    { id: 'evt_0152', title: '新的事', state: 'emerging', parents: [], updatedAt: '2026-10-05T12:00:00.000Z' },
+    { id: 'evt_0001', title: '旧的事', state: 'active', parents: [], updatedAt: '2026-09-01T12:00:00.000Z' },
+  ];
+  const ids = (text) => [...text.matchAll(/evt_\d+/g)].map((m) => m[0]);
+  assert.deepEqual(ids(renderDirectory(events)), ['evt_0152', 'evt_0001']);
+  assert.deepEqual(ids(renderDirectory(events, 'id')), ['evt_0001', 'evt_0152']);
+  assert.match(renderDirectory(events, 'id'), /按 id 排列/);
+});

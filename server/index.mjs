@@ -178,7 +178,7 @@ const set = {
       required: ['text'], additionalProperties: false,
     }),
     facts: nullable({
-      type: 'object', description: 'Each key given replaces that fact; null removes it.',
+      type: 'object', description: 'goal, constraint and plan go here, never directly in set. Each key given replaces that fact; null removes it.',
       properties: {
         goal: { ...factValue, description: 'What it is for, and what would count as done.' },
         constraint: { ...factValue, description: 'Limits, budgets, deadlines, wishes.' },
@@ -256,7 +256,7 @@ const TOOLS = [
   {
     name: 'event_record_expression',
     group: 'fields',
-    description: `Record words together with the changes they support, in one atomic write: title, state, progress, facts, refs, metadata. To ground the changes on words already recorded, pass that Account's accountId and its exact text. Needs expectedVersion. Mark your own inferences in the text of a fact, with their basis. ${VERBATIM} Returns a receipt.`,
+    description: `Record words together with the changes they support, in one atomic write: title, state, progress, facts (goal, constraint, plan), refs, metadata. To ground the changes on words already recorded, pass that Account's accountId and its exact text. Needs expectedVersion. Mark your own inferences in the text of a fact, with their basis. ${VERBATIM} Returns a receipt.`,
     inputSchema: {
       type: 'object',
       properties: { eventId, actor, text, accountSource, via, expectedVersion, accountId: { type: 'string', description: 'An Account of this Event that the changes rest on.' }, set },

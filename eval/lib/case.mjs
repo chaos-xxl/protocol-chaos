@@ -43,16 +43,17 @@ function saveConversation(directory, name, record) {
 
 /**
  * Runs one case in one arm. Writes <directory>/result.json and returns it:
- * {rows: probe results, conversations: per-conversation counts}.
+ * {rows: probe results, conversations: per-conversation counts}. `provider` writes (the
+ * sessions); `readerProvider`, when given, answers the probes instead, as the model `reader`.
  */
-export async function runCase({ caseDef, arm: armName, model, rep, provider, library, directory, prompts, maxModelCalls = 25, keepStores = true, runTag = 'run' }) {
-  const arm = ARMS[armName];
+export async function runCase({ caseDef, arm: armName, armImpl, model, rep, provider, readerProvider, reader, library, directory, prompts, maxModelCalls = 25, keepStores = true, runTag = 'run' }) {
+  const arm = armImpl ?? ARMS[armName];
   if (existsSync(directory)) rmSync(directory, { recursive: true, force: true });
   const store = join(directory, 'store');
   const meta = arm.prepare(store, caseMatters(library, caseDef));
   const conversations = [];
 
-  const talk = async (kind, name, at, user, storeDir) => {
+  const talk = async (kind, name, at, user, storeDir, via = provider) => {
     let handle;
     try {
       handle = await arm.open(storeDir, { ...at, meta });
@@ -63,7 +64,7 @@ export async function runCase({ caseDef, arm: armName, model, rep, provider, lib
     let system;
     try {
       system = systemPrompt(prompts, armName, { ...at, view: handle.view });
-      result = await converse({ provider, system, user, store: handle, maxModelCalls, conversationId: `${runTag}/${model.id}/r${rep}/${caseDef.id}/${armName}/${name}` });
+      result = await converse({ provider: via, system, user, store: handle, maxModelCalls, conversationId: `${runTag}/${model.id}/r${rep}/${caseDef.id}/${armName}/${name}` });
     } finally {
       await handle.close();
     }
@@ -88,11 +89,11 @@ export async function runCase({ caseDef, arm: armName, model, rep, provider, lib
   for (const probe of caseDef.probes) {
     const copy = join(directory, 'probes', probe.id);
     copyDirectory(store, copy);
-    const result = await talk('probe', probe.id, probe, probeMessage(probe.question, probe.answer), copy);
+    const result = await talk('probe', probe.id, probe, probeMessage(probe.question, probe.answer), copy, readerProvider ?? provider);
     const scored = result.ok ? score(probe.answer, result.reply) : { outcome: 'failed', value: null, normalized: null, method: result.error };
     const summary = conversations.at(-1);
     rows.push({
-      model: model.id, rep, template: caseDef.template, case: caseDef.id, probe: probe.id, category: caseDef.category, arm: armName,
+      model: model.id, reader: reader ?? model.id, rep, template: caseDef.template, case: caseDef.id, probe: probe.id, category: caseDef.category, arm: armName,
       library: caseDef.library, scale: Boolean(caseDef.scale), author: caseDef.author,
       question: probe.question, gold: probe.answer,
       ...scored, reply: result.reply ?? null,
@@ -100,7 +101,7 @@ export async function runCase({ caseDef, arm: armName, model, rep, provider, lib
     });
     if (!keepStores) rmSync(copy, { recursive: true, force: true });
   }
-  const record = { case: caseDef.id, arm: armName, model: model.id, rep, finishedAt: new Date().toISOString(), rows, conversations };
+  const record = { case: caseDef.id, arm: armName, model: model.id, reader: reader ?? model.id, rep, finishedAt: new Date().toISOString(), rows, conversations };
   writeJson(join(directory, 'result.json'), record);
   return record;
 }
