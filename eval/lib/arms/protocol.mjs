@@ -4,7 +4,9 @@
 // bearer token, as a remote client does: the server binds every write to the assistant
 // (ACTOR_MISMATCH otherwise) and requires expectedVersion for the writes that change fields
 // or parents. The directory (context_pack, every page) is in the system prompt; the tools
-// are the server's own, as it lists them.
+// are the server's own, as it lists them for the arm's tool profile (server --tools): by
+// default writer, the reading tools, event_note and event_record_expression, which is what
+// an assistant that brings an Event's fields up to date itself is offered.
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,9 +21,9 @@ const SERVER = fileURLToPath(new URL('../../../server/index.mjs', import.meta.ur
 const PRELOAD = pathToFileURL(fileURLToPath(new URL('../clock-preload.mjs', import.meta.url))).href;
 const START_TIMEOUT_MS = 20_000;
 
-/** Starts a server on `directory` with its clock at `instant`; resolves with {child, url}. */
-export function startServer(directory, instant) {
-  const child = spawn(process.execPath, ['--import', PRELOAD, SERVER, '--http', '127.0.0.1:0', '--data', directory], {
+/** Starts a server on `directory` with its clock at `instant`, offering `tools`; resolves with {child, url}. */
+export function startServer(directory, instant, tools = 'all') {
+  const child = spawn(process.execPath, ['--import', PRELOAD, SERVER, '--http', '127.0.0.1:0', '--data', directory, '--tools', tools], {
     // Only what node needs: no keys from the harness's environment reach the server.
     env: { PATH: process.env.PATH ?? '', PROTOCOL_CHAOS_EVAL_CLOCK: instant },
     stdio: ['ignore', 'ignore', 'pipe'],
@@ -78,8 +80,10 @@ async function connect(url, token) {
   return client;
 }
 
-export default {
+/** The P arm with a tool profile of the server's (--tools). */
+export const protocolArm = ({ tools = 'writer' } = {}) => ({
   name: 'P',
+  tools,
   /** A tool call as it is counted in a pilot: event_note says whether it continued a matter or started one. */
   label(name, args) {
     if (name !== 'event_note') return name;
@@ -95,7 +99,7 @@ export default {
   },
   /** Starts a server for one conversation and connects to it as `assistant`. */
   async open(directory, { date, time, assistant, meta }) {
-    const { child, url } = await startServer(directory, instantOf(date, time));
+    const { child, url } = await startServer(directory, instantOf(date, time), tools);
     let client;
     try {
       client = await connect(url, meta.tokens[assistant]);
@@ -131,4 +135,6 @@ export default {
   dump(directory) {
     return readFileSync(join(directory, 'repository.json'), 'utf8');
   },
-};
+});
+
+export default protocolArm();

@@ -65,7 +65,7 @@ test('P: over HTTP each assistant writes as itself, with versions, at the simula
   const meta = P.prepare(dir, [matter('a', '2026 年 11 月搬家', '下个月搬家，预算 2 万。')]);
   const b = await P.open(dir, { date: '2026-10-08', time: '09:30', assistant: 'B', meta });
   try {
-    assert.equal(b.tools.length, 14);
+    assert.deepEqual(b.tools.map((t) => t.function.name).sort(), ['context_pack', 'event_get_protocol', 'event_note', 'event_record_expression', 'event_search'], 'the writer profile');
     assert.ok(!b.has('repository_export'), 'no owner tools');
     assert.match(b.view, /^## 事情目录/);
     assert.match(b.view, /evt_0001｜2026 年 11 月搬家｜active｜上级：无｜更新：2026-09-20/);

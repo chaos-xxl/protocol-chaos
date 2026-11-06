@@ -8,7 +8,7 @@ This is not a general memory benchmark, and it does not test the protocol's prod
 
 | Arm | Store | Injected when a session starts | Tools |
 |---|---|---|---|
-| **P** | the reference server of this repository, over local HTTP, one bearer token per assistant | the directory (`context_pack`, every page), one line per Event with everything it returns | the server's 14 tools, as it lists them |
+| **P** | the reference server of this repository, over local HTTP, one bearer token per assistant | the directory (`context_pack`, every page), one line per Event with everything it returns | the server's tools for the `writer` profile (`--tools writer`): `context_pack`, `event_search`, `event_get_protocol`, `event_note`, `event_record_expression`, as it lists them |
 | **T1** entries | one list of entries, like the built-in memory of Hermes Agent, with no size limit | every entry | `memory`: `add`, `replace` and `remove`; `replace` and `remove` find one entry by a unique substring |
 | **T2** files | one Markdown file per matter, plus `index.md` | `index.md` | `notes_view`, `notes_search`, `notes_create`, `notes_str_replace`, `notes_append` |
 
