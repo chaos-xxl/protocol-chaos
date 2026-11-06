@@ -13,6 +13,10 @@
 //   node eval/cli.mjs report RUN_DIR [--blind]
 //       Writes results.jsonl, summary.json, report.md and the review packet; with --blind,
 //       pilot-report.md, pilot.json and the review packet without its key.
+//   node eval/cli.mjs audit RUN_DIR
+//       Checks every store the sessions left, by rules (lib/audit.mjs): words kept, history
+//       kept, attribution, words claimed but not said, matters added, latest number in the
+//       current state. Writes audit.json and audit.md.
 //   node eval/cli.mjs d7 [--out FILE]
 //       The deterministic demonstration of two assistants writing at once.
 //   node --env-file=eval/.env.local eval/cli.mjs models --gateway eval/gateway.local.json
@@ -31,6 +35,7 @@ import { SPLITS, TEMPLATES, material } from './lib/material.mjs';
 import { loadPrompts, systemPrompt } from './lib/prompts.mjs';
 import { checkModel, createProvider, listModels } from './lib/provider.mjs';
 import { rehearsalProvider } from './lib/rehearsal.mjs';
+import { auditRun, renderAudit } from './lib/audit.mjs';
 import { pilotAnalysis, renderPilot } from './lib/pilot.mjs';
 import { analyze, collect, renderReport, reviewPacket } from './lib/report.mjs';
 import { modelFromGateway, renderScreen, screen } from './lib/screen.mjs';
@@ -275,6 +280,17 @@ function pilot(runDir) {
   say(`Pilot report: ${join(dir, 'pilot-report.md')} (${records.length} case runs, ${packet.entries.length} answers to review)`);
 }
 
+/** The store audit of a run (lib/audit.mjs). */
+function audit(runDir) {
+  const dir = resolve(runDir);
+  const rows = auditRun(dir);
+  if (rows.length === 0) fail(`No stores under ${dir}`);
+  const manifest = existsSync(join(dir, 'manifest.json')) ? readJson(join(dir, 'manifest.json')) : {};
+  writeJson(join(dir, 'audit.json'), rows);
+  writeFileAtomic(join(dir, 'audit.md'), renderAudit(rows, manifest));
+  say(`Audit: ${join(dir, 'audit.md')} (${rows.length} stores)`);
+}
+
 // ---- preview: the system prompt of one conversation, for reviewing prompts ----
 
 async function preview(values) {
@@ -352,8 +368,9 @@ const [command, ...rest] = positionals;
 if (command === 'validate') validate(values);
 else if (command === 'run') await run(values);
 else if (command === 'report') (values.blind ? pilot : report)(rest[0] ?? fail('report needs the run directory'));
+else if (command === 'audit') audit(rest[0] ?? fail('audit needs the run directory'));
 else if (command === 'preview') await preview(values);
 else if (command === 'd7') await (await import('./lib/d7.mjs')).main(values);
 else if (command === 'models') await models(values);
 else if (command === 'screen') await screenCommand(values);
-else fail('Commands: validate, run, report, preview, d7, models, screen. See the comment at the top of eval/cli.mjs.');
+else fail('Commands: validate, run, report, audit, preview, d7, models, screen. See the comment at the top of eval/cli.mjs.');
