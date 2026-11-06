@@ -31,21 +31,28 @@ const pts = (x) => (Number.isFinite(x) ? `${x >= 0 ? '+' : ''}${(100 * x).toFixe
 const pval = (p) => (Number.isFinite(p) ? (p < 0.0001 ? '<0.0001' : p.toFixed(4)) : '—');
 const sumOrNull = (list) => (list.some((x) => x === null || x === undefined) ? null : list.reduce((a, b) => a + b, 0));
 
+/** What a list of conversations cost; a count some request did not report is null. */
+function costOf(convs) {
+  return {
+    conversations: convs.length,
+    failedConversations: convs.filter((c) => !c.ok).length,
+    requests: convs.reduce((n, c) => n + c.requests, 0),
+    input: sumOrNull(convs.map((c) => c.input)),
+    cached: sumOrNull(convs.map((c) => c.cached)),
+    output: sumOrNull(convs.map((c) => c.output)),
+    reasoning: sumOrNull(convs.map((c) => c.reasoning)),
+    retries: convs.reduce((n, c) => n + (c.retries ?? 0), 0),
+    toolErrors: convs.reduce((n, c) => n + c.toolErrors, 0),
+  };
+}
+/** The kinds of conversation: the scripted messages, the questions, and the organizer's nights. */
+export const KINDS = ['session', 'probe', 'organize'];
+
 function cost(records, model) {
   const out = {};
   for (const arm of ARMS) {
     const convs = records.filter((r) => r.model === model && r.arm === arm).flatMap((r) => r.conversations);
-    out[arm] = {
-      conversations: convs.length,
-      failedConversations: convs.filter((c) => !c.ok).length,
-      requests: convs.reduce((n, c) => n + c.requests, 0),
-      input: sumOrNull(convs.map((c) => c.input)),
-      cached: sumOrNull(convs.map((c) => c.cached)),
-      output: sumOrNull(convs.map((c) => c.output)),
-      reasoning: sumOrNull(convs.map((c) => c.reasoning)),
-      retries: convs.reduce((n, c) => n + (c.retries ?? 0), 0),
-      toolErrors: convs.reduce((n, c) => n + c.toolErrors, 0),
-    };
+    out[arm] = { ...costOf(convs), byKind: Object.fromEntries(KINDS.map((kind) => [kind, costOf(convs.filter((c) => c.kind === kind))])) };
   }
   return out;
 }
@@ -144,6 +151,16 @@ export function renderReport(analysis, manifest = {}) {
       const per = tokens === null || !m.correct[arm] ? '—' : Math.round(tokens / m.correct[arm]).toLocaleString('en');
       const a = m.agreement[arm];
       lines.push(`| ${arm} | ${c.conversations} | ${c.failedConversations} | ${c.requests} | ${c.retries} | ${c.toolErrors} | ${c.input?.toLocaleString('en') ?? '—'} | ${c.cached?.toLocaleString('en') ?? '—'} | ${c.output?.toLocaleString('en') ?? '—'} | ${c.reasoning?.toLocaleString('en') ?? '—'} | ${per} | ${Number.isFinite(a.share) ? `${a.disagree}/${a.items}` : '—'} |`);
+    }
+    if (ARMS.some((arm) => m.cost[arm].byKind?.organize.conversations)) {
+      lines.push('', 'By kind of conversation (sessions: the writer; probes: the reader; organizing: the organizer):', '', '| Arm | Kind | Conversations | Failed | Requests | Tool errors | Input tokens | Cached | Output |', '|---|---|---|---|---|---|---|---|---|');
+      for (const arm of ARMS) {
+        for (const kind of KINDS) {
+          const c = m.cost[arm].byKind[kind];
+          if (!c.conversations) continue;
+          lines.push(`| ${arm} | ${kind} | ${c.conversations} | ${c.failedConversations} | ${c.requests} | ${c.toolErrors} | ${c.input?.toLocaleString('en') ?? '—'} | ${c.cached?.toLocaleString('en') ?? '—'} | ${c.output?.toLocaleString('en') ?? '—'} |`);
+        }
+      }
     }
     lines.push('');
   }

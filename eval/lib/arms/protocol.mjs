@@ -15,6 +15,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { Clients } from '../../../server/clients.mjs';
 import { ASSISTANT_IDS, writeRepository } from '../p-writer.mjs';
+import { ORGANIZER_ID } from '../prompts.mjs';
 import { beijingDate, instantOf } from '../util.mjs';
 
 const SERVER = fileURLToPath(new URL('../../../server/index.mjs', import.meta.url));
@@ -86,6 +87,24 @@ async function connect(url, token) {
   return client;
 }
 
+/**
+ * The tools each kind of conversation is offered. An assistant in mode inline: `tools` (by
+ * default writer). An assistant that only records (modes light and organized): assistant, the
+ * reading tools and event_note. The organizer: what the agent guide gives an organizer, the
+ * reading tools, event_words_since, event_record_expression, the parent links, and event_note
+ * to record words again on the Event they belong to.
+ */
+export const RECORD_ONLY_TOOLS = 'assistant';
+export const ORGANIZER_TOOLS = 'read,record,fields,links,sync';
+
+/** The latest createdAt of the Accounts in a repository.json; the organizer reads the words after it. */
+export function latestAccountTime(directory) {
+  const snapshot = JSON.parse(readFileSync(join(directory, 'repository.json'), 'utf8'));
+  let latest = '';
+  for (const { accounts } of snapshot.events) for (const a of accounts) if (a.createdAt > latest) latest = a.createdAt;
+  return latest || new Date(0).toISOString();
+}
+
 /** The P arm with a tool profile of the server's (--tools) and a directory order (renderDirectory). */
 export const protocolArm = ({ tools = 'writer', order = 'recent' } = {}) => ({
   name: 'P',
@@ -102,14 +121,17 @@ export const protocolArm = ({ tools = 'writer', order = 'recent' } = {}) => ({
     const clients = new Clients(directory);
     const tokens = {};
     for (const [letter, name] of Object.entries(ASSISTANT_IDS)) tokens[letter] = clients.add(name);
+    tokens[ORGANIZER_ID] = clients.add(ORGANIZER_ID);
     return { tokens };
   },
-  /** Starts a server for one conversation and connects to it as `assistant`. */
-  async open(directory, { date, time, assistant, meta }) {
-    const { child, url } = await startServer(directory, instantOf(date, time), tools);
+  /** Starts a server for one conversation and connects to it as `assistant`, or as the organizer. */
+  async open(directory, { date, time, assistant, meta, mode = 'inline', role = 'assistant' }) {
+    const organizing = role === 'organizer';
+    const offered = organizing ? ORGANIZER_TOOLS : mode === 'inline' ? tools : RECORD_ONLY_TOOLS;
+    const { child, url } = await startServer(directory, instantOf(date, time), offered);
     let client;
     try {
-      client = await connect(url, meta.tokens[assistant]);
+      client = await connect(url, meta.tokens[organizing ? ORGANIZER_ID : assistant]);
       const { tools } = await client.listTools();
       const events = [];
       let cursor;
@@ -141,6 +163,19 @@ export const protocolArm = ({ tools = 'writer', order = 'recent' } = {}) => ({
   },
   dump(directory) {
     return readFileSync(join(directory, 'repository.json'), 'utf8');
+  },
+  /** The organizer's starting point: the words after the starting store's are new. */
+  organizeStart(directory) {
+    return { since: latestAccountTime(directory) };
+  },
+  /** The organizer's message: where event_words_since starts; null when no words were recorded since. */
+  organizeMessage(directory, state, { date }) {
+    if (latestAccountTime(directory) <= state.since) return null;
+    return `现在是 ${date} 夜里，整理上次整理以后新记的话：用 event_words_since 取，since 填 "${state.since}"。`;
+  },
+  /** After a night: the words the organizer itself recorded are not new the next night. */
+  organizeDone(directory, state) {
+    state.since = latestAccountTime(directory);
   },
 });
 

@@ -160,3 +160,16 @@ test('model settings are checked, and a missing key stops before any request', (
   assert.throws(() => checkModel({ id: 'M M', endpoint: 'https://example.com', model: 'x' }), /id must/);
   assert.throws(() => createProvider(model(), { env: {} }), /TEST_KEY is not set/);
 });
+
+test('a reply to a prompt as long as the context is refused, not passed on (a local server drops the start silently)', async () => {
+  const long = { ...deepseekReply, usage: { ...deepseekReply.usage, prompt_tokens: 65_538 } };
+  queue = [{ status: 200, body: long }];
+  await assert.rejects(
+    createProvider(model({ maxPromptTokens: 64_000 }), { env, sleep: noWait }).complete([{ role: 'user', content: 'x' }], []),
+    (error) => error.status === 400 && error.retryable === false && /longer than the context \(65538 prompt tokens/.test(error.message),
+  );
+  queue = [{ status: 200, body: deepseekReply }];
+  const out = await createProvider(model({ maxPromptTokens: 64_000 }), { env, sleep: noWait }).complete([{ role: 'user', content: 'x' }], []);
+  assert.equal(out.usage.input, 100);
+  assert.throws(() => checkModel(model({ maxPromptTokens: 0 })), /maxPromptTokens must be a positive integer/);
+});

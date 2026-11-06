@@ -46,6 +46,7 @@ export function checkModel(model) {
   if (typeof model?.model !== 'string' || !model.model) problems.push('model must name the model');
   if (model?.api !== undefined && !['openai', 'anthropic', 'responses'].includes(model.api)) problems.push('api must be "openai", "anthropic" or "responses"');
   if (model?.apiKeyEnv !== undefined && !/^[A-Z_][A-Z0-9_]*$/.test(model.apiKeyEnv)) problems.push('apiKeyEnv must be an environment variable name');
+  if (model?.maxPromptTokens !== undefined && !(Number.isInteger(model.maxPromptTokens) && model.maxPromptTokens > 0)) problems.push('maxPromptTokens must be a positive integer');
   for (const field of ['conversationHeader', 'requestIdHeader']) {
     if (model?.[field] !== undefined && !/^[A-Za-z0-9-]+$/.test(model[field])) problems.push(`${field} must be a header name`);
   }
@@ -264,6 +265,12 @@ export function createProvider(model, { env = process.env, fetchImpl = fetch, sl
           }
           const parsed = wire.parse(model, data);
           if (!parsed) throw new ProviderError(`model ${model.id}: the response holds no message: ${redact(text, secrets).slice(0, 200)}`, { status, retryable: true });
+          // A local server (Ollama) does not refuse a conversation longer than its context: it drops the start,
+          // the system prompt with it, and answers anyway. Such a request is refused here, as a cloud endpoint
+          // refuses one: the conversation fails, in whichever arm it happens.
+          if (model.maxPromptTokens && Number.isInteger(parsed.usage?.input) && parsed.usage.input >= model.maxPromptTokens) {
+            throw new ProviderError(`model ${model.id}: the conversation is longer than the context (${parsed.usage.input} prompt tokens, limit ${model.maxPromptTokens})`, { status: 400, retryable: false });
+          }
           return { ...parsed, latencyMs: Date.now() - started, attempts: attempt };
         }
         problem = new ProviderError(`model ${model.id}: HTTP ${status}: ${redact(text, secrets).slice(0, 300)}`, { status, retryable: RETRYABLE.has(status) });

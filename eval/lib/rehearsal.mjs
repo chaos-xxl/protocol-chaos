@@ -1,7 +1,7 @@
 // A stand-in for the model in dry runs (`cli.mjs run --dry`): it writes each user message to
-// the store with the arm's own tools and answers every probe "UNKNOWN". It checks the
-// plumbing (servers, tokens, clocks, files, copies, scoring, the report) at no cost; its
-// results say nothing about the arms.
+// the store with the arm's own tools and answers every probe "UNKNOWN". As the organizer, it
+// reads what is new in P and stops. It checks the plumbing (servers, tokens, clocks, files,
+// copies, the nights, scoring, the report) at no cost; its results say nothing about the arms.
 import { createScriptedProvider } from './provider.mjs';
 
 const todayOf = (system) => /今天是 (\d{4}-\d{2}-\d{2})/.exec(system)?.[1] ?? '';
@@ -14,13 +14,18 @@ export function rehearsalProvider() {
     const system = messages[0].content;
     const user = messages[1].content;
     const steps = messages.filter((m) => m.role === 'assistant').length;
-    if (user.includes('回答格式：')) return { content: '我查了一下。\nANSWER: UNKNOWN' };
     const names = new Set(tools.map((t) => t.function.name));
+    if (user.includes('回答格式：')) return { content: '我查了一下。\nANSWER: UNKNOWN' };
+    if (system.includes('你是整理助手')) {
+      const since = /since 填 "([^"]+)"/.exec(user)?.[1];
+      if (names.has('event_words_since') && since && steps === 0) return { tool_calls: [{ name: 'event_words_since', arguments: { since } }] };
+      return { content: '整理完了。' };
+    }
     const assistant = assistantOf(system);
     const title = `演练：${user.slice(0, 16)}`;
     if (names.has('event_note')) {
       if (steps === 0) return { tool_calls: [{ name: 'event_note', arguments: { actor: { kind: 'agent', id: `assistant-${assistant.toLowerCase()}` }, text: user, title } }] };
-      if (steps === 1) {
+      if (steps === 1 && names.has('event_record_expression')) {
         const receipt = JSON.parse(lastToolResult(messages));
         return {
           tool_calls: [{

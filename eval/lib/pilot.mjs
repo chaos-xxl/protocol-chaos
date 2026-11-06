@@ -124,6 +124,7 @@ export function pilotAnalysis(records, { seed = 11 } = {}) {
       const rows = scored.filter((r) => r.arm === arm);
       mechanics[arm] = {
         sessions: conversationMechanics(conversations.filter((c) => c.kind === 'session')),
+        organizing: conversationMechanics(conversations.filter((c) => c.kind === 'organize')),
         probes: {
           ...conversationMechanics(conversations.filter((c) => c.kind === 'probe')),
           // How the answers were written, not whether they were right.
@@ -177,8 +178,10 @@ export function renderPilot(analysis, manifest = {}) {
       lines.push(`| ${key} | ${t.rows} | ${t.correct} | ${t.stale} | ${t.wrong} | ${t.unknown} | ${t.unparseable} | ${t.failed} |`);
     }
     lines.push('', `Probes no arm answered correctly in any repetition: ${m.neverCorrect.length ? `${new Set(m.neverCorrect.map((e) => `${e.template} ${e.probe}`)).size}, with ${m.neverCorrect.length} replies in pilot.json (arms hidden)` : 'none'}.`, '');
-    for (const kind of ['sessions', 'probes']) {
-      lines.push(`### ${kind === 'sessions' ? 'Sessions (the scripted messages): how the arms recorded' : 'Probes (the questions): how the arms answered'}`, '');
+    const titles = { sessions: 'Sessions (the scripted messages): how the arms recorded', organizing: 'Organizing (the nights): how the organizer folded the words in', probes: 'Probes (the questions): how the arms answered' };
+    for (const kind of ['sessions', 'organizing', 'probes']) {
+      if (!ARMS.some((arm) => m.mechanics[arm][kind].conversations)) continue;
+      lines.push(`### ${titles[kind]}`, '');
       const header = kind === 'probes'
         ? '| Arm | Conversations | Answered | Ended otherwise | Unparseable | Tool calls | Tool errors | Without a write | Requests | Retries |'
         : '| Arm | Conversations | Answered | Ended otherwise | Tool calls | Tool errors | Without a write | Requests | Retries |';
@@ -201,7 +204,7 @@ export function renderPilot(analysis, manifest = {}) {
     }
     lines.push('### Tokens', '', '| Arm | Kind | Input | Cached | Output | Reasoning | System prompt (chars, mean) | Model time (s) |', '|---|---|---|---|---|---|---|---|');
     for (const arm of ARMS) {
-      for (const kind of ['sessions', 'probes']) {
+      for (const kind of ['sessions', 'organizing', 'probes']) {
         const x = m.mechanics[arm][kind];
         if (!x.conversations) continue;
         lines.push(`| ${arm} | ${kind} | ${num(x.tokens.input)} | ${num(x.tokens.cached)} | ${num(x.tokens.output)} | ${num(x.tokens.reasoning)} | ${num(x.systemChars)} | ${Math.round(x.latencyMs / 1000).toLocaleString('en')} |`);

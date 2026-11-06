@@ -12,7 +12,19 @@ This is not a general memory benchmark, and it does not test the protocol's prod
 | **T1** entries | one list of entries, like the built-in memory of Hermes Agent, with no size limit | every entry | `memory`: `add`, `replace` and `remove`; `replace` and `remove` find one entry by a unique substring |
 | **T2** files | one Markdown file per matter, plus `index.md` | `index.md` | `notes_view`, `notes_search`, `notes_create`, `notes_str_replace`, `notes_append` |
 
-Held equal across arms: the model, its settings, the user's scripted words, the dates, the background library (written in each arm's own form, checked to hold the same information), and the shared instructions, word for word. Only the paragraph on how to use the store differs. Every arm organizes as it records: P records the words with `event_note` and then updates the fields with `event_record_expression`; T1 edits its entries; T2 edits its files and the index. No nightly organizer runs.
+Held equal across arms: the model, its settings, the user's scripted words, the dates, the background library (written in each arm's own form, checked to hold the same information), and the shared instructions, word for word. Only the paragraph on how to use the store differs. By default (mode `inline`) every arm organizes as it records: P records the words with `event_note` and then updates the fields with `event_record_expression`; T1 edits its entries; T2 edits its files and the index. No nightly organizer runs.
+
+### Modes: who brings the current state up to date
+
+`--mode` sets how the assistants write; the same mode applies to all three arms.
+
+| Mode | The assistants (sessions and probes) | At night |
+|---|---|---|
+| `inline` (default) | record and bring the current state up to date, as above | nothing |
+| `light` | only add words, in every arm: P is offered the `assistant` profile (the reading tools and `event_note`); T1's `memory` takes only `add`, a new entry headed 【待整理】; T2 has no `notes_str_replace`, so it can create files and append to them | nothing |
+| `organized` | as in `light` | on the night (23:30) of every day with a session, an organizer, the model given by `--organizer`, folds the new words into the current state |
+
+The organizer has its own shared instructions (`eval/prompts/organizer.md`, the same words in every arm) and its own paragraph per arm. It is told what is new since the last night, in each arm's own way: in P, where `event_words_since` starts (the latest Account before that night), and it is offered the reading tools, `event_words_since`, `event_record_expression`, the parent links and `event_note` (to record words again on the Event they belong to, since words cannot be moved); in T1, the entries added since the last night, and every action of `memory`; in T2, the files created and the text appended since the last night, and every tool. A night with nothing new is skipped. A probe sees the store as it is at the probe's time, so a probe asked on the day of the last session comes before that night's organizing. The organizer's conversations are kept and counted, by kind, in the report.
 
 ## How a case runs
 
@@ -129,7 +141,9 @@ node --env-file=eval/.env.local eval/cli.mjs screen --gateway eval/gateway.local
 npm run test:eval                                # the harness's own tests
 ```
 
-A run writes `manifest.json` (models without keys, code commit, hashes of the prompts, templates, library and code), `cases.json`, `library.json`, and under `work/<model>/rep<n>/<case>/<arm>/`: the store as the sessions left it, a copy per probe, every conversation (`conversations/*.json.gz`) and `result.json`. `--resume <run>` continues a run that stopped, refusing if anything it hashed has changed. The formal split runs only from a committed tree.
+A run writes `manifest.json` (models without keys, code commit, hashes of the prompts, templates, library and code), `cases.json`, `library.json`, and under `work/<model>/rep<n>/<case>/<arm>/`: the store as the sessions left it, a copy per probe, every conversation (`conversations/*.json.gz`) and `result.json`. `--resume <run>` continues a run that stopped, refusing if anything it hashed has changed, or its mode, reader or organizer. The formal split runs only from a committed tree.
+
+`--reader <id>` answers every probe with that model instead of the writer, so that what differs between writers is how the store was written. A model served locally (for example by Ollama, `http://127.0.0.1:11434/v1/chat/completions`) can be listed like any other; give it `maxPromptTokens` below half its context: such a server does not refuse a conversation longer than its context but drops the start of it, system prompt included, and the harness refuses any reply whose prompt reached that many tokens, as a cloud endpoint refuses a conversation that is too long.
 
 ## Statistics
 

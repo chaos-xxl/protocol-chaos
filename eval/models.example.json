@@ -16,6 +16,16 @@
       "body": { "thinking": { "type": "enabled" }, "max_tokens": 16384 },
       "passback": ["reasoning_content"],
       "concurrency": 4
+    },
+    {
+      "id": "qwen3.5-4b-local",
+      "endpoint": "http://127.0.0.1:11434/v1/chat/completions",
+      "model": "qwen3.5:4b-q4_K_M",
+      "body": { "reasoning_effort": "none", "max_tokens": 8192 },
+      "concurrency": 1,
+      "timeoutMs": 900000,
+      "maxRetries": 2,
+      "maxPromptTokens": 64000
     }
   ]
 }

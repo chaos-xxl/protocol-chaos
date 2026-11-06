@@ -29,6 +29,24 @@ export const TOOLS = [{
   },
 }];
 
+/** The tool of an assistant that only records (modes light and organized): add only. */
+export const ADD_ONLY_TOOLS = [{
+  type: 'function',
+  function: {
+    name: 'memory',
+    description: '新增一条记忆条目。只能新增，不能改或删已有的条目。新增立即保存，下次对话开始时就在记忆里。',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['add'] },
+        content: { type: 'string', description: '新条目的全部内容。' },
+      },
+      required: ['action', 'content'],
+      additionalProperties: false,
+    },
+  },
+}];
+
 const occurrences = (text, part) => {
   let count = 0;
   for (let at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + part.length)) count += 1;
@@ -68,6 +86,24 @@ export function memoryTool(entries, save) {
   };
 }
 
+/**
+ * The entries of `now` that `before` did not hold. The assistants only add, so `before` is a
+ * prefix of `now`; should it not be, every entry `before` does not hold as many times is new.
+ */
+export function addedEntries(before, now) {
+  if (before.length <= now.length && before.every((entry, i) => entry === now[i])) return now.slice(before.length);
+  const left = new Map();
+  for (const entry of before) left.set(entry, (left.get(entry) ?? 0) + 1);
+  return now.filter((entry) => {
+    const n = left.get(entry) ?? 0;
+    if (n > 0) {
+      left.set(entry, n - 1);
+      return false;
+    }
+    return true;
+  });
+}
+
 export function view(entries) {
   if (entries.length === 0) return '## 记忆\n\n（还没有任何条目）';
   return `## 记忆\n\n这次对话开始时的全部条目，共 ${entries.length} 条，条目之间用 § 隔开：\n\n${entries.join(DELIMITER)}`;
@@ -82,23 +118,43 @@ export default {
     writeJson(join(directory, FILE), { entries: renderEntries(matters) }, 0o600);
     return {};
   },
-  /** Opens the store for one conversation. */
-  async open(directory) {
+  /**
+   * Opens the store for one conversation. An assistant that only records (mode light or
+   * organized) may only add entries; the organizer, and an assistant in mode inline, may change any.
+   */
+  async open(directory, { mode = 'inline', role = 'assistant' } = {}) {
     const file = join(directory, FILE);
     const load = () => JSON.parse(readFileSync(file, 'utf8')).entries;
+    const addOnly = mode !== 'inline' && role !== 'organizer';
     // The system prompt holds the entries as they were when the conversation started; each change is made to the
     // entries as they are now, so a change by another conversation in between is never written over.
     const injected = view(load());
     return {
-      tools: TOOLS,
+      tools: addOnly ? ADD_ONLY_TOOLS : TOOLS,
       view: injected,
       has: (name) => name === 'memory',
       call: async (name, args) => {
+        if (addOnly && args?.action !== 'add') return fail('只能新增（action 用 add），不能改或删已有的条目。');
         const entries = load();
         return memoryTool(entries, () => writeJson(file, { entries }, 0o600))(args);
       },
       close: async () => {},
     };
+  },
+  /** The organizer's starting point: the entries as they are before the first night. */
+  organizeStart(directory) {
+    return { entries: JSON.parse(readFileSync(join(directory, FILE), 'utf8')).entries };
+  },
+  /** The organizer's message: the entries added since the last night; null when there are none. */
+  organizeMessage(directory, state, { date }) {
+    const now = JSON.parse(readFileSync(join(directory, FILE), 'utf8')).entries;
+    const fresh = addedEntries(state.entries, now);
+    if (fresh.length === 0) return null;
+    return `现在是 ${date} 夜里，整理上次整理以后新记的话。上次整理以后新增了 ${fresh.length} 条：\n\n${fresh.join(DELIMITER)}`;
+  },
+  /** After a night: what the organizer left is the next night's starting point. */
+  organizeDone(directory, state) {
+    state.entries = JSON.parse(readFileSync(join(directory, FILE), 'utf8')).entries;
   },
   /** The whole store as text, for the review of a run. */
   dump(directory) {

@@ -7,12 +7,16 @@
 //   node --env-file=eval/.env.local eval/cli.mjs run --split dev [--models eval/models.local.json]
 //       [--model ID ...] [--reps 2] [--arms P,T1,T2] [--cases PREFIX] [--scale] [--out DIR]
 //       [--resume DIR] [--dry] [--concurrency N] [--allow-dirty] [--blind] [--reader ID]
+//       [--p-directory recent|id] [--mode inline|light|organized] [--organizer ID]
 //       Runs the cases. --dry plays the model with a stand-in (no network, no cost). --blind
 //       is for a pilot: it writes only the blind report (no accuracy by arm), see lib/pilot.mjs.
 //       --resume continues a run, repeating the case runs the infrastructure failed.
 //       --reader answers every probe with that model of the list instead of the writer's, so
 //       that what differs is how the store was written, not how well it is read.
 //       --p-directory id lists P's directory by id instead of most recently updated first.
+//       --mode: inline (default), the assistants record and bring the current state up to date;
+//       light, they only record; organized, they only record and --organizer, a model of the
+//       list, folds the new words in every night (lib/case.mjs, timeline).
 //   node eval/cli.mjs report RUN_DIR [--blind]
 //       Writes results.jsonl, summary.json, report.md and the review packet; with --blind,
 //       pilot-report.md, pilot.json and the review packet without its key.
@@ -36,7 +40,7 @@ import { protocolArm } from './lib/arms/protocol.mjs';
 import { ARMS, InfrastructureError, caseMatters, runCase, verifyCase } from './lib/case.mjs';
 import { describeLibrary } from './lib/library.mjs';
 import { SPLITS, TEMPLATES, material } from './lib/material.mjs';
-import { loadPrompts, systemPrompt } from './lib/prompts.mjs';
+import { MODES, loadPrompts, systemPrompt } from './lib/prompts.mjs';
 import { checkModel, createProvider, listModels } from './lib/provider.mjs';
 import { rehearsalProvider } from './lib/rehearsal.mjs';
 import { auditRun, renderAudit } from './lib/audit.mjs';
@@ -138,6 +142,10 @@ async function run(values) {
   const pDirectory = values['p-directory'] ?? 'recent';
   if (!['recent', 'id'].includes(pDirectory)) fail('--p-directory is recent or id');
   const pArm = protocolArm({ order: pDirectory });
+  const mode = values.mode ?? 'inline';
+  if (!MODES.includes(mode)) fail(`--mode is one of ${MODES.join(', ')}`);
+  if (mode === 'organized' && !values.organizer && !values.dry) fail('--mode organized needs --organizer ID, the model that organizes');
+  if (mode !== 'organized' && values.organizer) fail('--organizer goes with --mode organized');
   const reps = Number(values.reps ?? 2);
   if (!Number.isInteger(reps) || reps < 1 || reps > 10) fail('--reps must be 1 to 10');
 
@@ -149,8 +157,10 @@ async function run(values) {
 
   let models;
   let reader = null;
+  let organizer = null;
   if (values.dry) {
     models = [{ id: 'rehearsal', model: 'rehearsal', endpoint: 'http://127.0.0.1/', concurrency: Number(values.concurrency ?? 4) }];
+    if (mode === 'organized') organizer = { id: 'rehearsal-organizer', model: 'rehearsal', endpoint: 'http://127.0.0.1/' };
   } else {
     const file = resolve(values.models ?? join(EVAL, 'models.local.json'));
     if (!existsSync(file)) fail(`No model list at ${file}. Copy eval/models.example.json to eval/models.local.json and fill it in.`);
@@ -158,6 +168,7 @@ async function run(values) {
     models = values.model?.length ? listed.filter((m) => values.model.includes(m.id)) : listed;
     if (models.length === 0) fail('No model selected.');
     if (values.reader) reader = listed.find((m) => m.id === values.reader) ?? fail(`No model ${values.reader} in ${file}.`);
+    if (values.organizer) organizer = listed.find((m) => m.id === values.organizer) ?? fail(`No model ${values.organizer} in ${file}.`);
   }
 
   const out = resolve(values.resume ?? values.out ?? join(EVAL, 'runs', `${new Date().toISOString().replace(/[:.]/g, '-')}-${split}`));
@@ -165,9 +176,10 @@ async function run(values) {
   const manifestFile = join(out, 'manifest.json');
   const manifest = {
     startedAt: new Date().toISOString(),
-    split, reps, arms, pDirectory, dry: Boolean(values.dry), git, node: process.version,
+    split, reps, arms, pDirectory, mode, dry: Boolean(values.dry), git, node: process.version,
     models: models.map(({ id, model, endpoint, body, passback, concurrency }) => ({ id, model, endpoint: endpoint ? new URL(endpoint).origin : null, body: body ?? {}, passback: passback ?? [], concurrency })),
     reader: reader ? { id: reader.id, model: reader.model, endpoint: new URL(reader.endpoint).origin, body: reader.body ?? {}, passback: reader.passback ?? [] } : null,
+    organizer: organizer ? { id: organizer.id, model: organizer.model, endpoint: new URL(organizer.endpoint).origin, body: organizer.body ?? {}, passback: organizer.passback ?? [] } : null,
     prompts: prompts.hashes,
     hashes: {
       templates: hashFiles(listFiles(TEMPLATES, (n) => n.endsWith('.json'))),
@@ -181,6 +193,10 @@ async function run(values) {
     const before = readJson(manifestFile);
     for (const key of ['templates', 'code', 'library']) if (before.hashes[key] !== manifest.hashes[key]) fail(`Cannot resume: the ${key} changed since the run started.`);
     if (JSON.stringify(before.prompts) !== JSON.stringify(manifest.prompts)) fail('Cannot resume: the prompts changed since the run started.');
+    if ((before.mode ?? 'inline') !== mode) fail(`Cannot resume: the run is in mode ${before.mode ?? 'inline'}; pass --mode ${before.mode ?? 'inline'}.`);
+    for (const role of ['reader', 'organizer']) {
+      if ((before[role]?.id ?? null) !== (manifest[role]?.id ?? null)) fail(`Cannot resume: the run's ${role} is ${before[role]?.id ?? 'none'}.`);
+    }
   } else {
     if (existsSync(out)) fail(`${out} exists; use --resume to continue it`);
     writeJson(manifestFile, manifest);
@@ -189,6 +205,7 @@ async function run(values) {
   }
 
   const readerProvider = reader ? createProvider(reader) : undefined;
+  const organizerProvider = organizer ? (values.dry ? rehearsalProvider() : createProvider(organizer)) : undefined;
   for (const model of models) {
     const provider = values.dry ? rehearsalProvider() : createProvider(model);
     const concurrency = Number(values.concurrency ?? model.concurrency ?? 4);
@@ -217,7 +234,10 @@ async function run(values) {
       // it is recorded and counted as failed, so it cannot hide.
       for (let attempt = 1; ; attempt += 1) {
         try {
-          await runCase({ ...job, armImpl: job.arm === 'P' ? pArm : undefined, model, provider, readerProvider, reader: reader?.id, library, prompts, runTag: basename(out) });
+          await runCase({
+            ...job, armImpl: job.arm === 'P' ? pArm : undefined, model, provider, readerProvider, reader: reader?.id,
+            mode, organizerProvider, organizer: organizer?.id, library, prompts, runTag: basename(out),
+          });
           streak = 0;
           break;
         } catch (error) {
@@ -373,6 +393,7 @@ const { values, positionals } = parseArgs({
     arms: { type: 'string' }, cases: { type: 'string' }, case: { type: 'string' }, scale: { type: 'boolean' }, out: { type: 'string' },
     resume: { type: 'string' }, dry: { type: 'boolean' }, concurrency: { type: 'string' }, 'allow-dirty': { type: 'boolean' },
     gateway: { type: 'string' }, candidates: { type: 'string' }, blind: { type: 'boolean' }, reader: { type: 'string' }, 'p-directory': { type: 'string' },
+    mode: { type: 'string' }, organizer: { type: 'string' },
   },
 });
 const [command, ...rest] = positionals;

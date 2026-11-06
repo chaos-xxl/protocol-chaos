@@ -29,6 +29,30 @@ export const TOOLS = [
   tool('notes_append', '在一个文件的末尾追加文字（自动另起一行）。', { path, content: { type: 'string', description: '追加的文字。' } }, ['path', 'content']),
 ];
 const NAMES = new Set(TOOLS.map((t) => t.function.name));
+/** The tools of an assistant that only records (modes light and organized): no changes to text already written. */
+export const RECORD_ONLY_TOOLS = TOOLS.filter((t) => t.function.name !== 'notes_str_replace');
+const RECORD_ONLY_NAMES = new Set(RECORD_ONLY_TOOLS.map((t) => t.function.name));
+
+/** Every .md file of a folder and its content. */
+const snapshotOf = (folder) => Object.fromEntries(readdirSync(folder).filter((n) => n.endsWith('.md')).sort().map((n) => [n, readFileSync(join(folder, n), 'utf8')]));
+
+/**
+ * What changed in a folder since `before`: files created, text appended at the end of a file,
+ * and files changed otherwise (shown whole). The assistants only create and append, so the last
+ * kind is a safeguard.
+ */
+export function folderChanges(before, now) {
+  const changes = [];
+  for (const [name, content] of Object.entries(now)) {
+    const old = before[name];
+    if (old === undefined) changes.push({ name, kind: 'created', text: content });
+    else if (content === old) continue;
+    else if (content.startsWith(old)) changes.push({ name, kind: 'appended', text: content.slice(old.length).replace(/^\n+/, '') });
+    else changes.push({ name, kind: 'changed', text: content });
+  }
+  return changes;
+}
+const CHANGE_LABELS = { created: '新建', appended: '末尾追加', changed: '改过，全文' };
 
 const fail = (text) => ({ text: `出错：${text}`, isError: true });
 const ok = (text) => ({ text, isError: false });
@@ -118,17 +142,39 @@ export default {
     writeFileAtomic(join(folder, INDEX), index, 0o600);
     return {};
   },
-  async open(directory) {
+  /**
+   * Opens the store for one conversation. An assistant that only records (mode light or
+   * organized) may view, search, create and append, not replace; the organizer, and an
+   * assistant in mode inline, has every tool.
+   */
+  async open(directory, { mode = 'inline', role = 'assistant' } = {}) {
     const folder = join(directory, FOLDER);
     const tools = notesTools(folder);
+    const recordOnly = mode !== 'inline' && role !== 'organizer';
+    const names = recordOnly ? RECORD_ONLY_NAMES : NAMES;
     const index = existsSync(join(folder, INDEX)) ? readFileSync(join(folder, INDEX), 'utf8') : '';
     return {
-      tools: TOOLS,
+      tools: recordOnly ? RECORD_ONLY_TOOLS : TOOLS,
       view: view(index),
-      has: (name) => NAMES.has(name),
+      has: (name) => names.has(name),
       call: async (name, args) => tools[name](args ?? {}),
       close: async () => {},
     };
+  },
+  /** The organizer's starting point: the folder as it is before the first night. */
+  organizeStart(directory) {
+    return { files: snapshotOf(join(directory, FOLDER)) };
+  },
+  /** The organizer's message: the files created or added to since the last night; null when there are none. */
+  organizeMessage(directory, state, { date }) {
+    const changes = folderChanges(state.files, snapshotOf(join(directory, FOLDER)));
+    if (changes.length === 0) return null;
+    const parts = changes.map((c) => `=== ${c.name}（${CHANGE_LABELS[c.kind]}）===\n${c.text.trimEnd()}`);
+    return `现在是 ${date} 夜里，整理上次整理以后新记的话。上次整理以后新建或追加了这些文件：\n\n${parts.join('\n\n')}`;
+  },
+  /** After a night: what the organizer left is the next night's starting point. */
+  organizeDone(directory, state) {
+    state.files = snapshotOf(join(directory, FOLDER));
   },
   dump(directory) {
     const folder = join(directory, FOLDER);
