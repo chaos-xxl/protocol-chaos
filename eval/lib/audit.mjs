@@ -75,6 +75,19 @@ function lineAttributes(line, { assistant, date }) {
   return dated && who && line.includes('用户原话');
 }
 
+/**
+ * The words of a record marked as the person's: what follows the label, inside its quotation
+ * marks if it has them. The models write the label in several forms (用户原话：「…」,
+ * 用户原话"…", 记下（用户原话）：…); any of them is read.
+ */
+export function wordsOfRecord(line) {
+  const rest = line.slice(line.indexOf('用户原话') + '用户原话'.length).replace(/^[\s）)\]】:：]+/u, '');
+  const close = { '「': '」', '“': '”', '"': '"', '『': '』', "'": "'" }[rest[0]];
+  if (!close) return rest;
+  const end = rest.indexOf(close, 1);
+  return end > 0 ? rest.slice(1, end) : rest.slice(1);
+}
+
 /** A store, read the same way for every arm: matters with a current state and records. */
 function readStore(arm, directory) {
   if (arm === 'P') {
@@ -101,8 +114,7 @@ function readStore(arm, directory) {
       const date = /(\d{4}-\d{2}-\d{2})/u.exec(line)?.[1] ?? null;
       // The record's own label is the first of the two; "用户原话" later in an assistant's note is not one.
       const user = /用户原话|助手记下/u.exec(line)?.[0] === '用户原话';
-      const quoted = /用户原话[:：]?\s*「([\s\S]*?)」/u.exec(line)?.[1] ?? /用户原话[:：]\s*(.*)$/u.exec(line)?.[1] ?? line;
-      return { line, text: user ? quoted : line, date, user };
+      return { line, text: user ? wordsOfRecord(line) : line, date, user };
     });
     return { state, records, text: block };
   });

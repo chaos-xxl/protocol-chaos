@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
-import { auditCaseRun, clausesOf, normalize, numbersIn } from '../lib/audit.mjs';
+import { auditCaseRun, clausesOf, normalize, numbersIn, wordsOfRecord } from '../lib/audit.mjs';
 import { runCase } from '../lib/case.mjs';
 import { generateLibrary } from '../lib/library.mjs';
 import { loadPrompts } from '../lib/prompts.mjs';
@@ -20,6 +20,9 @@ test('clauses: questions and fragments left out; numbers with 万 and commas', (
   assert.equal(normalize('「预算 2 万」'), '预算2万');
   assert.deepEqual(numbersIn('预算 2.4万，报价 6,800 元，每晚 800'), [24000, 6800, 800]);
   assert.deepEqual(numbersIn('每天走路不超过一万五千步'), [15000]);
+  assert.equal(wordsOfRecord('- 2026-10-05 助手 A｜用户原话：「下个月搬家。」（问句未记）'), '下个月搬家。');
+  assert.equal(wordsOfRecord('- 2026-10-05，助手 A：用户原话"下个月搬家。"'), '下个月搬家。');
+  assert.equal(wordsOfRecord('- 2026-10-05 助手 A 记下（用户原话）：下个月搬家。'), '下个月搬家。');
 });
 
 test('record lines in the forms the models wrote: with or without the colon, and an assistant\'s note that mentions the person\'s words', async () => {
