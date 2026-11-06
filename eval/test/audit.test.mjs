@@ -19,6 +19,23 @@ test('clauses: questions and fragments left out; numbers with 万 and commas', (
   assert.deepEqual(clausesOf('对了，新家想换个沙发，预算 5000 左右。要是下雨，是不是得改期？'), ['新家想换个沙发', '预算5000左右']);
   assert.equal(normalize('「预算 2 万」'), '预算2万');
   assert.deepEqual(numbersIn('预算 2.4万，报价 6,800 元，每晚 800'), [24000, 6800, 800]);
+  assert.deepEqual(numbersIn('每天走路不超过一万五千步'), [15000]);
+});
+
+test('record lines in the forms the models wrote: with or without the colon, and an assistant\'s note that mentions the person\'s words', async () => {
+  const { writeFileSync, mkdirSync } = await import('node:fs');
+  const [caseDef] = expandTemplate(template, { split: 'dev' });
+  const library = generateLibrary({ reserved: template.keywords });
+  const dir = join(root, 'T1-forms');
+  const T1 = (await import('../lib/arms/entries.mjs')).default;
+  T1.prepare(dir, [...library.slice(0, caseDef.library), ...caseDef.seeds]);
+  const entries = JSON.parse((await import('node:fs')).readFileSync(join(dir, 'entries.json'), 'utf8')).entries;
+  entries.push('【2026 年 11 月搬家】\n条件：预算 25000 元。\n记录：\n- 2026-10-05 助手 A：用户原话「下个月搬家，预算 20000 元。」\n- 2026-10-08 助手 B｜助手记下（推测）：按用户原话里的说法，预算可能还会变。');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'entries.json'), JSON.stringify({ entries }));
+  const out = auditCaseRun({ caseDef, arm: 'T1', storeDir: dir, library });
+  assert.deepEqual([out.userRecords, out.unsaid], [1, 0]);
+  assert.equal(out.attributed, 2, 'both clauses of the first message are attributed to A on 2026-10-05');
 });
 
 const template = {

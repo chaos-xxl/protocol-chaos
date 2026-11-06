@@ -25,6 +25,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import P from './arms/protocol.mjs';
+import { NUMBER_RUN, parseNumberRun } from './score.mjs';
 import T1 from './arms/entries.mjs';
 import T2 from './arms/files.mjs';
 import { Repository } from '../../server/repository.mjs';
@@ -52,13 +53,13 @@ export function clausesOf(message) {
   return out;
 }
 
-/** Numbers written with Arabic digits, with 万, 千, k or w after them. */
+/** Every number in a text, written with Arabic digits, Chinese numerals or both, read as the probes' answers are. */
 export function numbersIn(text) {
   const out = [];
-  for (const m of String(text).normalize('NFKC').matchAll(/(\d[\d,]*(?:\.\d+)?)\s*(万|千|k|K|w|W)?/gu)) {
-    const n = Number(m[1].replace(/,/g, ''));
-    if (!Number.isFinite(n)) continue;
-    out.push(n * ({ 万: 1e4, w: 1e4, W: 1e4, 千: 1e3, k: 1e3, K: 1e3 }[m[2]] ?? 1));
+  const runs = new RegExp(NUMBER_RUN.source, 'gu');
+  for (const m of String(text).normalize('NFKC').replace(/(\d),(?=\d{3})/g, '$1').matchAll(runs)) {
+    const n = parseNumberRun(m[0]);
+    if (Number.isFinite(n)) out.push(n);
   }
   return out;
 }
@@ -98,8 +99,9 @@ function readStore(arm, directory) {
     const recordLines = at < 0 ? [] : lines.slice(at + 1).filter((line) => line.trim() && !/^\s*最后整理/u.test(line));
     const records = recordLines.map((line) => {
       const date = /(\d{4}-\d{2}-\d{2})/u.exec(line)?.[1] ?? null;
-      const user = line.includes('用户原话');
-      const quoted = /用户原话[:：]\s*「([\s\S]*?)」/u.exec(line)?.[1] ?? /用户原话[:：]\s*(.*)$/u.exec(line)?.[1] ?? line;
+      // The record's own label is the first of the two; "用户原话" later in an assistant's note is not one.
+      const user = /用户原话|助手记下/u.exec(line)?.[0] === '用户原话';
+      const quoted = /用户原话[:：]?\s*「([\s\S]*?)」/u.exec(line)?.[1] ?? /用户原话[:：]\s*(.*)$/u.exec(line)?.[1] ?? line;
       return { line, text: user ? quoted : line, date, user };
     });
     return { state, records, text: block };

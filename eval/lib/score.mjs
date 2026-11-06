@@ -57,7 +57,7 @@ export function extractAnswer(reply) {
 const CN_DIGITS = { 零: 0, 〇: 0, 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
 const CN_UNITS = { 十: 10, 百: 100, 千: 1000 };
 const CN_BIG = { 万: 1e4, 亿: 1e8, w: 1e4, W: 1e4, k: 1e3, K: 1e3 };
-const NUMBER_RUN = /[-+]?(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千])(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万亿]|(?<=\d)\s?[万千百亿]|(?<=[\d万千百])[kKwW](?![A-Za-z]))*/u;
+export const NUMBER_RUN = /[-+]?(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千])(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万亿]|(?<=\d)\s?[万千百亿]|(?<=[\d万千百])[kKwW](?![A-Za-z]))*/u;
 
 /** The value of a number written with Arabic digits, Chinese numerals, or both (2.5万, 两万五, 2万5千). */
 export function parseNumberRun(run) {
