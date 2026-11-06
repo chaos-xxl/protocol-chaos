@@ -4,7 +4,7 @@
 // and only as SHA-256 hashes: a token is shown once, when it is created. The file is read
 // again whenever it changes, so a client removed while a server runs is refused at once.
 // A token names a client, not a person: it decides which `actor` that connection may
-// write as, nothing more.
+// write as and, when the entry lists them, which tool groups it is offered (index.mjs).
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
@@ -44,11 +44,29 @@ export class Clients {
   }
 
   list() {
-    return this.load().map(({ name, createdAt }) => ({ name, createdAt }));
+    return this.load().map(({ name, createdAt, tools }) => ({ name, createdAt, ...(Array.isArray(tools) ? { tools } : {}) }));
   }
 
-  /** Creates a client and returns its token, which is not kept anywhere in clear. */
-  add(name) {
+  /** The tool groups a client is offered, or undefined for the server's default. */
+  toolsOf(name) {
+    const tools = this.load().find((entry) => entry.name === name)?.tools;
+    return Array.isArray(tools) ? tools.filter((group) => typeof group === 'string') : undefined;
+  }
+
+  /** Sets the tool groups of a client; undefined for the server's default. False when there is no such client. */
+  setTools(name, tools) {
+    const entries = this.load();
+    if (!entries.some((entry) => entry.name === name)) return false;
+    this.save(entries.map((entry) => {
+      if (entry.name !== name) return entry;
+      const { tools: _previous, ...rest } = entry;
+      return tools ? { ...rest, tools } : rest;
+    }));
+    return true;
+  }
+
+  /** Creates a client and returns its token, which is not kept anywhere in clear; `tools` are its tool groups, if not the default. */
+  add(name, tools) {
     if (!CLIENT_NAME.test(name ?? '')) {
       throw new Error('A client name is 1 to 64 lowercase letters, digits, dots, hyphens or underscores, starting with a letter or a digit, such as "laptop" or "hermes".');
     }
@@ -57,7 +75,7 @@ export class Clients {
       throw new Error(`A client named "${name}" already exists. Remove it first to issue it a new token.`);
     }
     const token = `${TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
-    this.save([...entries, { name, tokenSha256: digest(token).toString('hex'), createdAt: new Date().toISOString() }]);
+    this.save([...entries, { name, tokenSha256: digest(token).toString('hex'), createdAt: new Date().toISOString(), ...(tools ? { tools } : {}) }]);
     return token;
   }
 

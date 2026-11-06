@@ -5,18 +5,42 @@ A small server that implements [draft 0.2](../PROTOCOL.md) at every level: Core,
 It was written from the specification alone, by an agent that had never seen another implementation, as a test that the document is enough.
 
 ```sh
-npx -y protocol-chaos@0.2 [--data <directory>] [--owner-tools]          # MCP over stdio, one computer
-npx -y protocol-chaos@0.2 --http 127.0.0.1:8721 [--data <directory>]    # MCP over HTTP, several computers
-npx -y protocol-chaos@0.2 clients add <name> | list | remove <name>     # the tokens for HTTP
-node server/index.mjs …                                                 # the same, from a clone
+npx -y protocol-chaos@0.2 [--data <directory>] [--tools <groups>] [--owner-tools]    # MCP over stdio, one computer
+npx -y protocol-chaos@0.2 --http 127.0.0.1:8721 [--data <directory>] [--tools <groups>]  # MCP over HTTP, several computers
+npx -y protocol-chaos@0.2 clients add <name> [--tools <groups>] | tools <name> <groups> | list | remove <name>  # the tokens for HTTP
+node server/index.mjs …                                                              # the same, from a clone
 ```
 
 | Option | |
 |---|---|
 | `--data` | Where the repository lives. Default: `$PROTOCOL_CHAOS_DATA`, then `~/.protocol-chaos`. |
+| `--tools` | Which [tool groups](#tool-groups) a connection is offered. Default: `all`. |
 | `--owner-tools` | Also offer `repository_export` and `repository_import`. An export holds everything, so these are off unless the owner asks (PROTOCOL.md §8.6, §10). Over HTTP, every client could then export the whole repository. |
 | `--http [host:]port` | Serve MCP streamable HTTP at `/mcp` instead of stdio: the Remote level (§9.2). The host defaults to `127.0.0.1`. |
 | `--tls-cert`, `--tls-key` | Serve HTTPS with this certificate and private key. Needed to listen on an address other machines can reach. |
+
+## Tool groups
+
+Every connection sends the definitions of the tools it is offered to its model, with every request. An assistant that only records the user's words, while an organizer folds them into fields later, needs four tools, not fourteen. `--tools` takes a comma-separated list of groups and profiles:
+
+| Group | Tools |
+|---|---|
+| `read` | `context_pack`, `event_search`, `event_get_protocol` |
+| `record` | `event_note` |
+| `fields` | `event_record_expression` |
+| `links` | `event_add_parent`, `event_remove_parent` |
+| `history` | `event_get_revisions`, `event_undo_revision` |
+| `sync` | `event_words_since` |
+| `entities` | `entity_search`, `entity_get`, `entity_create`, `entity_record` |
+| `owner` | `repository_export`, `repository_import`, offered only with `--owner-tools` as well |
+
+| Profile | Groups | For |
+|---|---|---|
+| `assistant` | `read`, `record` | an assistant whose words an organizer folds in later |
+| `writer` | `read`, `record`, `fields` | an assistant that brings an Event's fields up to date itself |
+| `all` | every group | an organizer, the conformance tests; the default |
+
+Add `entities` to either, as in `writer,entities`, for an assistant that keeps facts about people and places: those four tools are as long as all the others together. Over HTTP each client can have its own list, set when it is added (`clients add phone --tools assistant`) or later (`clients tools phone writer`, or `default` for the server's); it takes effect without a restart. A tool a connection is not offered cannot be called on it. The levels the server implements (PROTOCOL.md §12) are those of everything it offers with `all`.
 
 ## Storage
 

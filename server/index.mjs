@@ -2,12 +2,19 @@
 // The Protocol Chaos reference server: draft 0.2, levels Core, Entities, Search, Sync, Undo
 // and Remote, keeping the repository in one JSON file (store.mjs).
 //
-//   protocol-chaos [--data <directory>] [--owner-tools]                MCP over stdio (§9.1)
+//   protocol-chaos [--data <directory>] [--tools <groups>] [--owner-tools]        MCP over stdio (§9.1)
 //   protocol-chaos --http [<host>:]<port> [--tls-cert <file> --tls-key <file>]
-//                  [--data <directory>] [--owner-tools]                MCP over HTTP (§9.2)
-//   protocol-chaos clients add <name> | list | remove <name> [--data <directory>]
+//                  [--data <directory>] [--tools <groups>] [--owner-tools]        MCP over HTTP (§9.2)
+//   protocol-chaos clients add <name> [--tools <groups>] | tools <name> <groups>|default
+//                  | list | remove <name> [--data <directory>]
 //
 // --data         where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
+// --tools        which tool groups a connection is offered, so that an assistant's model is
+//                not handed definitions it never uses: a comma-separated list of groups
+//                (read, record, fields, links, history, sync, entities, owner) and profiles
+//                (assistant, writer, all). Default: all. Over HTTP a client can have its own
+//                list (clients add --tools, clients tools); the server's levels are those of
+//                everything it can offer.
 // --owner-tools  also offer repository_export and repository_import. An export holds
 //                everything, so they are off unless the owner asks (§8.6, §10); the
 //                conformance tests use them. Without them, the file itself is the export.
@@ -28,7 +35,7 @@ import { Store } from './store.mjs';
 import { ACCOUNT_SOURCES, ACTOR_KINDS, ProtocolError, STATES } from './validate.mjs';
 
 const args = process.argv.slice(2);
-const VALUED = ['--data', '--http', '--tls-cert', '--tls-key'];
+const VALUED = ['--data', '--http', '--tls-cert', '--tls-key', '--tools'];
 const option = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -48,8 +55,36 @@ for (let index = 0; index < args.length; index += 1) {
 const directory = resolve(option('--data') ?? process.env.PROTOCOL_CHAOS_DATA ?? join(homedir(), '.protocol-chaos'));
 const ownerTools = args.includes('--owner-tools');
 
+// Tool groups (§9.1 lets a server offer a connection only some of its operations). Profiles
+// name the usual choices: an assistant whose words an organizer folds into fields later, an
+// assistant that brings the fields up to date itself, and everything. People and places are
+// an add-on to either, such as "writer,entities": their four tools are as long as all the rest.
+const GROUPS = ['read', 'record', 'fields', 'links', 'history', 'sync', 'entities', 'owner'];
+const PROFILES = {
+  assistant: ['read', 'record'],
+  writer: ['read', 'record', 'fields'],
+  all: GROUPS,
+};
+/** A comma-separated list of groups and profiles, as groups in a fixed order; throws on an unknown name. */
+function parseTools(list) {
+  const chosen = new Set();
+  for (const name of String(list).split(',').map((part) => part.trim()).filter(Boolean)) {
+    if (Object.hasOwn(PROFILES, name)) PROFILES[name].forEach((group) => chosen.add(group));
+    else if (GROUPS.includes(name)) chosen.add(name);
+    else throw new Error(`Unknown tool group "${name}". Groups: ${GROUPS.join(', ')}. Profiles: ${Object.keys(PROFILES).join(', ')}.`);
+  }
+  if (chosen.size === 0) throw new Error('A tool list needs at least one group or profile.');
+  return GROUPS.filter((group) => chosen.has(group));
+}
+let toolsOption;
+try {
+  toolsOption = option('--tools') === undefined ? undefined : parseTools(option('--tools'));
+} catch (error) {
+  usage(error.message);
+}
+
 if (positional[0] === 'clients') clientsCommand(positional.slice(1));
-if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: clients add <name> | list | remove <name>.`);
+if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: clients add <name> | tools <name> <groups> | list | remove <name>.`);
 
 /** `protocol-chaos clients …`: manages the tokens of the Remote level, then exits. */
 function clientsCommand([action, name, ...rest]) {
@@ -57,13 +92,21 @@ function clientsCommand([action, name, ...rest]) {
   const say = (text) => process.stdout.write(`${text}\n`);
   try {
     if (action === 'add' && name && !rest.length) {
-      const token = clients.add(name);
+      const token = clients.add(name, toolsOption);
       say(`Created the client "${name}". Its token, shown only this once:\n\n  ${token}\n`);
       say(`Give it to that assistant as a bearer token (Authorization: Bearer <token>). It writes as {"kind": "agent", "id": "${name}"}.`);
+      if (toolsOption) say(`It is offered the tool groups ${toolsOption.join(', ')}.`);
       say(`To revoke it: protocol-chaos clients remove ${name}`);
+    } else if (action === 'tools' && name && rest.length === 1) {
+      const tools = rest[0] === 'default' ? undefined : parseTools(rest[0]);
+      if (!clients.setTools(name, tools)) {
+        process.stderr.write(`There is no client named "${name}".\n`);
+        process.exit(1);
+      }
+      say(tools ? `The client "${name}" is offered the tool groups ${tools.join(', ')}.` : `The client "${name}" is offered the server's tools.`);
     } else if (action === 'list' && !name) {
       const list = clients.list();
-      say(list.length ? list.map((client) => `${client.name}  (created ${client.createdAt})`).join('\n') : 'No clients.');
+      say(list.length ? list.map((client) => `${client.name}  (created ${client.createdAt}${client.tools ? `; tools ${client.tools.join(', ')}` : ''})`).join('\n') : 'No clients.');
     } else if (action === 'remove' && name && !rest.length) {
       if (!clients.remove(name)) {
         process.stderr.write(`There is no client named "${name}".\n`);
@@ -71,7 +114,7 @@ function clientsCommand([action, name, ...rest]) {
       }
       say(`Removed the client "${name}". Its token no longer works.`);
     } else {
-      usage('Usage: protocol-chaos clients add <name> | list | remove <name> [--data <directory>]');
+      usage('Usage: protocol-chaos clients add <name> [--tools <groups>] | tools <name> <groups>|default | list | remove <name> [--data <directory>]');
     }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
@@ -82,9 +125,9 @@ function clientsCommand([action, name, ...rest]) {
 
 const store = new Store(directory);
 
-const VERBATIM = "Verbatim rule: text is the user's actual words, trimmed and otherwise unchanged, never a summary or a third-person paraphrase such as \"The user confirmed…\"; when a message covers several Events, pass the part about this Event, still in the user's words. Interpretation belongs in the fields.";
+const VERBATIM = "text is the user's own words, unchanged (the part about this Event), never a summary or a paraphrase such as \"The user confirmed…\". Interpretation goes in the fields.";
 
-const VERBATIM_ENTITY = "Verbatim rule: the words (text, accountText) are the user's actual words, trimmed and otherwise unchanged, never a summary or a third-person paraphrase; pass the part about this Entity. Statements are your one-fact interpretation; mark an inference with basis.";
+const VERBATIM_ENTITY = "text and accountText are the user's own words, unchanged (the part about this Entity); Statements are your one-fact reading of them, and an inference carries its basis.";
 
 // The template from docs/agent-guide.md, under 2,000 characters because some clients cut
 // longer instructions. The rules it leaves out are in the tool descriptions. Over HTTP the
@@ -101,54 +144,58 @@ const instructions = (client) => [
 ].join('\n\n');
 
 // ---- input schemas (documentation; the server validates every input itself) ----
+// Kept short: every connection sends these definitions to its model with every request.
 
 const nullable = (schema) => ({ anyOf: [schema, { type: 'null' }] });
 const actor = {
   type: 'object',
-  description: 'Who is writing: your own identity, e.g. {"kind": "agent", "id": "laptop"}. Never the owner or another writer.',
+  description: 'You: {"kind": "agent", "id": <your name>}. Never the owner or another writer.',
   properties: { kind: { type: 'string', enum: ACTOR_KINDS }, id: { type: 'string', minLength: 1 }, label: { type: 'string' } },
   required: ['kind', 'id'],
   additionalProperties: false,
 };
-const text = { type: 'string', minLength: 1, description: "The user's actual words, verbatim. Never a summary or a third-person paraphrase." };
+const text = { type: 'string', minLength: 1, description: "The user's words, verbatim." };
 const accountSource = {
   type: 'string', enum: ACCOUNT_SOURCES,
-  description: 'Whose words they are: user (default), agent_response (your own sentence, such as an inference) or authorized_external (relayed from an application the user authorized).',
+  description: 'user (default); agent_response for your own sentence, such as an inference; authorized_external for words relayed from an app the user authorized.',
 };
-const via = { type: 'string', description: 'Where the words came from when they were not said in this conversation, e.g. "example-export".' };
-const eventId = { type: 'string', description: 'An Event id from the directory or a receipt.' };
-const expectedVersion = { type: 'integer', description: "The Event's version from your last read or receipt. On VERSION_CONFLICT, read again and reconsider." };
-const factValue = nullable({ type: 'string', minLength: 1, description: 'One sentence or paragraph, clear on its own; null removes the fact.' });
+const via = { type: 'string', description: 'Where the words came from, when not from this conversation.' };
+const eventId = { type: 'string', description: 'An Event id.' };
+const expectedVersion = { type: 'integer', description: 'The version from your last read or receipt.' };
+const factValue = nullable({ type: 'string', minLength: 1 });
 const set = {
   type: 'object',
-  description: 'Fields to replace, each with its complete current content; null removes a field. Inside facts, each supplied key replaces that fact and the others are unchanged.',
+  description: 'The fields to replace. Each replaces the stored one whole: give its complete current content, carrying over what still holds; null removes it.',
   properties: {
     title: nullable({ type: 'string', minLength: 1, maxLength: 80 }),
     state: { type: 'string', enum: STATES },
     progress: nullable({
-      type: 'object', description: 'Where the Event stands now. timestamp defaults to now.',
-      properties: { text: { type: 'string', minLength: 1 }, timestamp: { type: 'string' } },
+      type: 'object', description: 'Where it stands now.',
+      properties: {
+        text: { type: 'string', minLength: 1 },
+        timestamp: { type: 'string', description: 'When it was said, in UTC ending in Z, such as 2026-03-14T09:30:00.000Z. Default: now.' },
+      },
       required: ['text'], additionalProperties: false,
     }),
     facts: nullable({
-      type: 'object',
+      type: 'object', description: 'Each key given replaces that fact; null removes it.',
       properties: {
-        goal: { ...factValue, description: 'What the Event is meant to achieve, including what would count as done.' },
-        constraint: { ...factValue, description: 'Conditions it must meet: limits, deadlines, budgets, wishes and preferences.' },
-        plan: { ...factValue, description: 'The arrangement as currently decided: when, where, how, which option.' },
+        goal: { ...factValue, description: 'What it is for, and what would count as done.' },
+        constraint: { ...factValue, description: 'Limits, budgets, deadlines, wishes.' },
+        plan: { ...factValue, description: 'What is decided: when, where, how, which option.' },
       },
       additionalProperties: false,
     }),
     refs: nullable({
-      type: 'array', description: 'The people, places and things it involves; the complete new list. Each entry is {criteria} (a description in the user\'s terms, such as "my sister") or {ref} (the id of an existing Entity, never the owner). An empty list or null removes refs.',
+      type: 'array', description: "Who and what it involves, the complete list: {criteria} in the user's words, or {ref}, an Entity id (never the owner).",
       items: {
         anyOf: [
           { type: 'object', properties: { criteria: { type: 'string', minLength: 1 } }, required: ['criteria'], additionalProperties: false },
-          { type: 'object', properties: { ref: { type: 'string', minLength: 1, description: 'An Entity id from entity_search or entity_create.' } }, required: ['ref'], additionalProperties: false },
+          { type: 'object', properties: { ref: { type: 'string', minLength: 1 } }, required: ['ref'], additionalProperties: false },
         ],
       },
     }),
-    metadata: nullable({ type: 'object', description: 'Extension data: namespaced keys (dev.example/flag) to JSON values, replaced as a whole. An empty object or null removes it.', additionalProperties: true }),
+    metadata: nullable({ type: 'object', description: 'Extension data, replaced as a whole.', additionalProperties: true }),
   },
   additionalProperties: false,
 };
@@ -158,7 +205,7 @@ const linkSchema = {
     childEventId: eventId,
     parentEventId: eventId,
     actor,
-    sourceAccountIds: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'At least one Account of the child or of the parent that the link rests on.' },
+    sourceAccountIds: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Accounts of the child or the parent that the link rests on.' },
     expectedVersion: { ...expectedVersion, description: "The child's version." },
   },
   required: ['childEventId', 'parentEventId', 'actor', 'sourceAccountIds'],
@@ -167,16 +214,16 @@ const linkSchema = {
 const partialTime = { type: 'string', description: 'YYYY, YYYY-MM, YYYY-MM-DD or an RFC 3339 date-time.' };
 const newStatement = {
   type: 'object',
-  description: 'A new Statement: one fact about the Entity.',
+  description: 'One fact about the Entity.',
   properties: {
-    text: { type: 'string', minLength: 1, maxLength: 200, description: 'One fact, in natural language, with absolute dates.' },
-    topic: { type: 'string', minLength: 1, description: 'identity, home, family, work, skills, education, personality, beliefs, preferences, interests, taste, food, habits, health, finance, accounts (handles), relationship or details; other topics are accepted.' },
-    basis: { type: 'string', minLength: 1, description: 'Only for an inference: what it rests on.' },
-    saidAt: { ...partialTime, description: 'When it was said, if not now.' },
-    validFrom: { ...partialTime, description: 'When it starts to hold.' },
-    validTo: { ...partialTime, description: 'When it stops holding; after that it reads as outdated.' },
-    sensitivity: { type: 'string', enum: ['normal', 'private', 'sensitive'], description: 'normal by default; sensitive Statements never appear in summaries.' },
-    inSummary: { type: 'boolean', description: "Whether it belongs in the Entity's short summary. Default false." },
+    text: { type: 'string', minLength: 1, maxLength: 200, description: 'One fact, with absolute dates.' },
+    topic: { type: 'string', minLength: 1, description: 'identity, home, family, work, skills, education, personality, beliefs, preferences, interests, taste, food, habits, health, finance, accounts, relationship or details.' },
+    basis: { type: 'string', minLength: 1, description: 'For an inference: what it rests on.' },
+    saidAt: partialTime,
+    validFrom: partialTime,
+    validTo: { ...partialTime, description: 'When it stops holding.' },
+    sensitivity: { type: 'string', enum: ['normal', 'private', 'sensitive'], description: 'sensitive ones never appear in summaries.' },
+    inSummary: { type: 'boolean', description: 'Whether it belongs in the short summary.' },
   },
   required: ['text', 'topic'],
   additionalProperties: false,
@@ -186,17 +233,19 @@ const write = { readOnlyHint: false, destructiveHint: false };
 const read = { readOnlyHint: true };
 
 // Each tool runs against the repository the store hands it: the store reloads the file
-// when another process changed it, so the repository object is not fixed.
+// when another process changed it, so the repository object is not fixed. `group` is the
+// tool group (--tools) it belongs to.
 const TOOLS = [
   {
     name: 'event_note',
-    description: `Record the user's words on an Event, or start a new Event with them. Changes nothing else (it gives a title only to an Event that has none). With eventId the words are appended; without it a new Event starts in state emerging, optionally titled and placed under parentEventId. Check the directory first so one matter does not become two. ${VERBATIM} Returns a receipt.`,
+    group: 'record',
+    description: `Record the user's words on an Event, or start an Event with them; changes nothing else. With eventId the words are added (and the title, if it has none); without it a new emerging Event starts, with a title that names it on its own and, for a part of a larger Event, parentEventId. Check the directory or search first, so that one matter does not become two. ${VERBATIM} Returns a receipt.`,
     inputSchema: {
       type: 'object',
       properties: {
         actor, text, accountSource, via, eventId,
-        title: { type: 'string', minLength: 1, maxLength: 80, description: 'For a new Event, or an Event without a title: a name that identifies it on its own.' },
-        parentEventId: { ...eventId, description: 'For a new Event only: the larger Event it is part of.' },
+        title: { type: 'string', minLength: 1, maxLength: 80, description: 'A name that identifies it on its own, with when or which.' },
+        parentEventId: { ...eventId, description: 'For a new Event: the larger Event it is part of.' },
       },
       required: ['actor', 'text'],
       additionalProperties: false,
@@ -206,10 +255,11 @@ const TOOLS = [
   },
   {
     name: 'event_record_expression',
-    description: `Record words together with the changes they support, atomically: set any of title, state, progress, facts (goal, constraint, plan), refs and metadata. To fold words recorded earlier into fields, pass that Account's accountId and its exact text instead of appending new words. Each supplied field replaces the stored one, so supply its complete current content and carry over what still holds; null removes a field. Mark your own inferences inside the fact text with their basis. ${VERBATIM} Returns a receipt.`,
+    group: 'fields',
+    description: `Record words together with the changes they support, in one atomic write: title, state, progress, facts, refs, metadata. To ground the changes on words already recorded, pass that Account's accountId and its exact text. Needs expectedVersion. Mark your own inferences in the text of a fact, with their basis. ${VERBATIM} Returns a receipt.`,
     inputSchema: {
       type: 'object',
-      properties: { eventId, actor, text, accountSource, via, expectedVersion, accountId: { type: 'string', description: 'An existing Account of this Event to ground the changes on.' }, set },
+      properties: { eventId, actor, text, accountSource, via, expectedVersion, accountId: { type: 'string', description: 'An Account of this Event that the changes rest on.' }, set },
       required: ['eventId', 'actor', 'text'],
       additionalProperties: false,
     },
@@ -218,21 +268,24 @@ const TOOLS = [
   },
   {
     name: 'event_add_parent',
-    description: 'Link an Event (child) as part of a larger Event (parent). Link only when it is plainly part of it or a step toward it; two separate trips are siblings. Ground the link on Accounts of the child or of the parent. Adding an existing link changes nothing; a link that would close a cycle fails with PART_OF_CYCLE. Returns {eventId, version, parents} for the child.',
+    group: 'links',
+    description: 'Link an Event as part of a larger one, only when it plainly is, or is a step toward it (two separate trips are siblings). Ground the link on Accounts of either. Returns the child\'s {eventId, version, parents}.',
     inputSchema: linkSchema,
     annotations: write,
     run: (repo, args) => repo.addParent(args),
   },
   {
     name: 'event_remove_parent',
-    description: 'Remove the link "child is part of parent", grounded on Accounts of the child or of the parent. Removing a link that does not exist fails with NOT_FOUND. Returns {eventId, version, parents} for the child.',
+    group: 'links',
+    description: 'Remove the link that makes an Event part of another, grounded on Accounts of either. Returns the child\'s {eventId, version, parents}.',
     inputSchema: linkSchema,
     annotations: { readOnlyHint: false, destructiveHint: true },
     run: (repo, args) => repo.removeParent(args),
   },
   {
     name: 'event_get_protocol',
-    description: 'Read one Event: {event, accounts, entities?}, the document, its most recent Accounts (default 20, or "all"), oldest first, and, when its refs name Entities, those Entities as {id, kind, name}. History is read with event_get_revisions.',
+    group: 'read',
+    description: 'Read one Event: {event, accounts, entities?}, its document, its most recent Accounts (default 20, or "all"), oldest first, and the Entities its refs name.',
     inputSchema: {
       type: 'object',
       properties: { eventId, accounts: { anyOf: [{ type: 'integer', minimum: 0 }, { type: 'string', enum: ['all'] }] } },
@@ -244,7 +297,8 @@ const TOOLS = [
   },
   {
     name: 'context_pack',
-    description: 'The directory: every Event in brief, {id, title?, state, parents, progress?, updatedAt}, most recently updated first, from which you decide what to read. Pass sinceVersion (the version you cached) to learn whether anything changed; filter by state (a state, "open" or "closed"); page with limit and cursor (pass next).',
+    group: 'read',
+    description: 'The directory: every Event in brief (id, title, state, parents, progress, updatedAt), most recently updated first; decide from it what to read. sinceVersion tells whether anything changed; filter by state (also "open" or "closed"); page with limit and cursor.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -260,7 +314,8 @@ const TOOLS = [
   },
   {
     name: 'event_get_revisions',
-    description: 'Read the history of an Event: its Revisions in commit order. Page with limit and after (pass next).',
+    group: 'history',
+    description: 'The history of an Event: its Revisions in commit order. Page with limit and after.',
     inputSchema: {
       type: 'object',
       properties: { eventId, after: { type: 'string' }, limit: { type: 'integer', minimum: 1 } },
@@ -272,11 +327,12 @@ const TOOLS = [
   },
   {
     name: 'event_search',
-    description: 'Find Events for a query you chose, such as the name of a matter, before creating one (so one matter does not become two). Matching is by words, not by meaning: every Event whose title contains the query (ignoring case) comes first, then Events whose facts, progress, refs or recorded words contain it, then Events that hold every word of the query. Returns {events} in brief, as in the directory, best matches first. Filter by state (a state, "open" or "closed"); limit caps the number returned.',
+    group: 'read',
+    description: 'Find Events by words, not meaning: titles containing the query first, then facts, progress, refs and recorded words. Search before starting an Event. Filter by state; limit caps the results. Returns {events}, as in the directory.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', minLength: 1, description: 'The words to look for, such as the name of a matter.' },
+        query: { type: 'string', minLength: 1 },
         state: { type: 'string', enum: [...STATES, 'open', 'closed'] },
         limit: { type: 'integer', minimum: 1 },
       },
@@ -288,12 +344,13 @@ const TOOLS = [
   },
   {
     name: 'event_words_since',
-    description: 'The words recorded since a moment, for folding them into fields later or refreshing a cache. Returns {version, checkpoint, remaining, events}: each Event that gained Accounts after since, with its current title, state, facts, refs, progress and parents, and words, its new Accounts, oldest first. Pass checkpoint as the next since to continue; remaining counts the Accounts not yet returned. limit is the number of Events per batch (a batch never ends between two Accounts with the same createdAt). Going over the same words twice changes nothing, because each field write carries the complete current content.',
+    group: 'sync',
+    description: 'The words recorded since a timestamp, by Event, with each Event\'s current fields, to fold them in later. Returns {version, checkpoint, remaining, events}; pass checkpoint as the next since. limit is the number of Events per batch.',
     inputSchema: {
       type: 'object',
       properties: {
-        since: { type: 'string', description: 'A timestamp such as 2026-03-14T09:30:00.000Z: the checkpoint of your previous call, or an early time to read every word.' },
-        limit: { type: 'integer', minimum: 1, description: 'The number of Events per batch.' },
+        since: { type: 'string', description: 'A timestamp, such as the previous checkpoint.' },
+        limit: { type: 'integer', minimum: 1 },
       },
       required: ['since'],
       additionalProperties: false,
@@ -303,10 +360,11 @@ const TOOLS = [
   },
   {
     name: 'event_undo_revision',
-    description: 'Undo the latest change of an Event that has not been undone: a field.changed, parent.added or parent.removed Revision (words recorded since do not count). Events and words are never removed, so event.created and account.added cannot be undone, nor can an undo. Anything else fails with REVISION_NOT_REVERSIBLE, for example after another writer changed the Event: read it again and reconsider. Records a revision.reverted Revision and returns it; call again on the next change to walk further back.',
+    group: 'history',
+    description: 'Undo the latest change (fields or a link) of an Event that is not undone yet; Events and words are never removed. After another writer\'s change it fails with REVISION_NOT_REVERSIBLE: read again. Returns the new Revision.',
     inputSchema: {
       type: 'object',
-      properties: { revisionId: { type: 'string', description: 'The Revision to undo, from event_get_revisions.' }, actor },
+      properties: { revisionId: { type: 'string', description: 'From event_get_revisions.' }, actor },
       required: ['revisionId', 'actor'],
       additionalProperties: false,
     },
@@ -315,12 +373,13 @@ const TOOLS = [
   },
   {
     name: 'entity_search',
-    description: 'Find the people, animals, things and places the user refers to (Entities), for example before creating one, so that one does not become two. Every Entity whose name or an alias equals the query (ignoring case) comes first, then names and aliases that start with or contain it, then Entities whose Statements contain it. Omit query to list every Entity; filter by kind. Returns {entities}: cards {id, kind, name, aliases?, owner?, version, statements}, where statements counts the Statements that are not outdated.',
+    group: 'entities',
+    description: 'Find people, animals, things and places (Entities) by name, alias or Statement; search before creating one. Omit query to list all; filter by kind. Returns {entities}: {id, kind, name, aliases?, owner?, version, statements}.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', minLength: 1, description: 'A name, alias or words to look for.' },
-        kind: { type: 'string', minLength: 1, description: 'person, animal, thing or place (other kinds are kept as written).' },
+        query: { type: 'string', minLength: 1 },
+        kind: { type: 'string', minLength: 1, description: 'person, animal, thing or place.' },
         limit: { type: 'integer', minimum: 1 },
       },
       additionalProperties: false,
@@ -330,11 +389,12 @@ const TOOLS = [
   },
   {
     name: 'entity_get',
-    description: 'Read one Entity. entityId is an Entity id or "current_user" (the user\'s own Entity). view "summary" returns {entity, summary}: the short list of Statements meant to be loaded into every conversation (never sensitive ones). view "full" (default) returns {entity, statements}: the Statements that are not outdated, by topic, then by creation. includeHistory adds history (the outdated ones); includeEvents adds referencedBy (the Events whose refs name it); topics restricts the Statements returned.',
+    group: 'entities',
+    description: 'Read an Entity: an id, or "current_user" for the user. view "summary": the short list for every conversation; "full" (default): every current Statement, with includeHistory the outdated ones, with includeEvents the Events naming it; topics narrows it.',
     inputSchema: {
       type: 'object',
       properties: {
-        entityId: { type: 'string', description: 'An Entity id, or "current_user" for the owner.' },
+        entityId: { type: 'string' },
         view: { type: 'string', enum: ['summary', 'full'] },
         topics: { type: 'array', minItems: 1, items: { type: 'string', minLength: 1 } },
         includeHistory: { type: 'boolean' },
@@ -348,16 +408,17 @@ const TOOLS = [
   },
   {
     name: 'entity_create',
-    description: `Create an Entity: one specific person, animal, thing or place that recurs across Events or applications and has user-specific information to accumulate (otherwise use a {criteria} ref on the Event). Search first (entity_search). accountText holds the words it rests on; statements are its first facts, one fact each, 1 to 200 characters, with absolute dates. owner: true only for the user's own Entity (at most one). ${VERBATIM_ENTITY} Returns {entityId, version, accountId, added}.`,
+    group: 'entities',
+    description: `Create an Entity only for one specific person, animal, thing or place that recurs and has facts to keep; otherwise use a {criteria} ref. Search first. accountText: the words it rests on; statements: its first facts. owner: true only for the user's own Entity. ${VERBATIM_ENTITY} Returns {entityId, version, accountId, added}.`,
     inputSchema: {
       type: 'object',
       properties: {
         actor, kind: { type: 'string', minLength: 1, description: 'person, animal, thing or place.' },
         name: { type: 'string', minLength: 1, description: 'What the user calls it.' },
-        accountText: { ...text, description: "The user's actual words this Entity rests on, verbatim." },
+        accountText: text,
         accountSource, via,
-        aliases: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Other names; not the name itself, each once.' },
-        owner: { type: 'boolean', description: "true only for the user's own Entity." },
+        aliases: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'Other names, each once.' },
+        owner: { type: 'boolean' },
         statements: { type: 'array', items: newStatement },
       },
       required: ['actor', 'kind', 'name', 'accountText'],
@@ -368,15 +429,16 @@ const TOOLS = [
   },
   {
     name: 'entity_record',
-    description: `Record words about an Entity together with what they change: name, aliases (the complete new list), add (new Statements; may supersede or conflict with existing ones), update (status, reason, sensitivity, inSummary of existing Statements) and support (existing Statements these words also support). Saying the same thing again is merged into the existing Statement as more evidence. A Statement resting on the user's words can be superseded, or its status changed, only by the user's own words (USER_WORDS_PROTECTED): add your version with conflictsWith instead. A disputed Statement becomes current again only by the user's words (USER_CONFIRMATION_REQUIRED). Carry expectedVersion (the Entity's). ${VERBATIM_ENTITY} Returns {entityId, version, accountId, added?, merged?, changed?, supported?}.`,
+    group: 'entities',
+    description: `Record words about an Entity with what they change: name, aliases (the complete list), add (new Statements, which may supersede or conflictsWith others), update (status, reason, sensitivity, inSummary) and support. Saying the same thing again adds evidence. Only the user's own words may supersede, or change the status of, a Statement resting on the user's words (USER_WORDS_PROTECTED): add yours with conflictsWith. Needs expectedVersion, the Entity's. ${VERBATIM_ENTITY} Returns {entityId, version, accountId, added?, merged?, changed?, supported?}.`,
     inputSchema: {
       type: 'object',
       properties: {
-        entityId: { type: 'string', description: 'An Entity id, or "current_user" for the owner.' },
+        entityId: { type: 'string' },
         actor, text, accountSource, via,
         expectedVersion: { type: 'integer', description: "The Entity's version from your last read or write." },
         name: { type: 'string', minLength: 1 },
-        aliases: { type: 'array', items: { type: 'string', minLength: 1 }, description: 'The complete new list of aliases.' },
+        aliases: { type: 'array', items: { type: 'string', minLength: 1 } },
         add: { type: 'array', items: { ...newStatement, properties: { ...newStatement.properties, supersedes: statementIds, conflictsWith: statementIds } } },
         update: {
           type: 'array',
@@ -385,7 +447,7 @@ const TOOLS = [
             properties: {
               statementId: { type: 'string' },
               status: { type: 'string', enum: ['current', 'outdated', 'disputed'] },
-              reason: { type: 'string', minLength: 1, description: 'Why the status changed.' },
+              reason: { type: 'string', minLength: 1 },
               sensitivity: { type: 'string', enum: ['normal', 'private', 'sensitive'] },
               inSummary: { type: 'boolean' },
             },
@@ -393,7 +455,7 @@ const TOOLS = [
             additionalProperties: false,
           },
         },
-        support: { ...statementIds, description: 'Existing Statements these words also support.' },
+        support: statementIds,
       },
       required: ['entityId', 'actor', 'text'],
       additionalProperties: false,
@@ -403,17 +465,19 @@ const TOOLS = [
   },
   {
     name: 'repository_export',
-    description: 'For the owner only: export the whole repository (every Event with its Accounts and Revisions, every Entity with its accounts, Statements and revisions) in the draft-0.2 format. An export holds everything; do not call it for an agent task.',
+    group: 'owner',
+    description: 'For the owner only: the whole repository, in the draft-0.2 export format. Never for an agent task: an export holds everything.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
     annotations: read,
     run: (repo, args) => repo.exportRepository(args),
   },
   {
     name: 'repository_import',
-    description: 'For the owner only: import an export ({snapshot}) into this repository, which must be empty (otherwise REPOSITORY_NOT_EMPTY). Everything is checked first; if any check fails nothing is imported.',
+    group: 'owner',
+    description: 'For the owner only: import an export ({snapshot}) into an empty repository (otherwise REPOSITORY_NOT_EMPTY). If any check fails, nothing is imported.',
     inputSchema: {
       type: 'object',
-      properties: { snapshot: { type: 'object', description: 'An export produced by repository_export.' } },
+      properties: { snapshot: { type: 'object' } },
       required: ['snapshot'],
       additionalProperties: false,
     },
@@ -421,9 +485,24 @@ const TOOLS = [
     run: (repo, args) => repo.importRepository(args),
   },
 ];
-const OWNER_TOOLS = new Set(['repository_export', 'repository_import']);
-const offered = TOOLS.filter((tool) => ownerTools || !OWNER_TOOLS.has(tool.name));
-const byName = new Map(offered.map((tool) => [tool.name, tool]));
+
+/** The tools a connection is offered: those of its groups; the owner's only with --owner-tools. */
+const serverTools = toolsOption ?? GROUPS;
+const offerings = new Map();
+function offeringFor(groups) {
+  const key = groups.join(',');
+  if (!offerings.has(key)) {
+    const tools = TOOLS.filter((tool) => groups.includes(tool.group) && (tool.group !== 'owner' || ownerTools));
+    offerings.set(key, { tools, byName: new Map(tools.map((tool) => [tool.name, tool])) });
+  }
+  return offerings.get(key);
+}
+/** A client's own groups (clients.json), unknown names left out; the server's when it has none. */
+let registry;
+function groupsOf(client) {
+  const own = client && registry ? registry.toolsOf(client)?.filter((group) => GROUPS.includes(group)) : undefined;
+  return own?.length ? GROUPS.filter((group) => own.includes(group)) : serverTools;
+}
 
 // §9.2: over a remote connection every write is bound to the authenticated client, and the
 // writes that change fields or parents must say which version they saw.
@@ -445,6 +524,7 @@ const { version } = createRequire(import.meta.url)('../package.json');
 
 /** One MCP server: for stdio, the only one; over HTTP, one per request, bound to its client. */
 function createServer({ client } = {}) {
+  const { tools: offered, byName } = offeringFor(groupsOf(client));
   const server = new Server(
     { name: 'protocol-chaos-reference', version },
     { capabilities: { tools: {} }, instructions: instructions(client) },
@@ -489,6 +569,7 @@ if (option('--http')) {
     usage(`Refused: ${listen.host} can be reached from other machines, and a remote server must use TLS (§9.2). Give --tls-cert and --tls-key, or listen on 127.0.0.1 behind a TLS reverse proxy.`);
   }
   const clients = new Clients(directory);
+  registry = clients;
   let httpServer;
   try {
     httpServer = await serveHttp({
@@ -503,7 +584,8 @@ if (option('--http')) {
   const host = listen.host.includes(':') ? `[${listen.host}]` : listen.host;
   const count = clients.list().length;
   process.stderr.write(`Protocol Chaos reference server ${version} at ${cert ? 'https' : 'http'}://${host}:${httpServer.address().port}${PATH}, `
-    + `repository ${directory}, ${count} client${count === 1 ? '' : 's'}${ownerTools ? ', owner tools on: every client can export the whole repository' : ''}\n`);
+    + `repository ${directory}, ${count} client${count === 1 ? '' : 's'}${toolsOption ? `, tools ${toolsOption.join(',')} unless a client has its own` : ''}`
+    + `${ownerTools ? ', owner tools on: every client offered the owner group can export the whole repository' : ''}\n`);
   if (!count) process.stderr.write('No clients yet, so every request is refused. Create one with: protocol-chaos clients add <name>\n');
   const stop = () => {
     httpServer.close(() => process.exit(0));

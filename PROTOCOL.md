@@ -421,6 +421,7 @@ Before changing anything, an import MUST check that: no two items of the export 
 
 - Each operation is an MCP tool of the same name. Its arguments are the operation's input; a success is a tool result whose single text item holds the JSON result; a failure is a tool result with `isError: true` whose text holds `{code, message}`.
 - Read operations carry `readOnlyHint: true`; `event_remove_parent` and `event_undo_revision` carry `destructiveHint: true`. Because MCP assumes a write is destructive unless told otherwise, the other writes SHOULD carry `destructiveHint: false`.
+- A server MAY offer a connection only some of its operations, for example reading and `event_note` to an assistant whose words an organizer folds into fields later, and the rest to the organizer: every definition offered is sent to the agent's model. The levels a server states (§12) are those of everything it can offer.
 - Many clients show an agent only the server's `instructions` and the tool descriptions. A server SHOULD therefore send short `instructions` in its `initialize` result covering principles 2, 3 and 6 and the writer rules of §7, and SHOULD repeat the verbatim rule in the descriptions of the write tools. The [agent guide](docs/agent-guide.md) has a template.
 
 ### 9.2 Remote

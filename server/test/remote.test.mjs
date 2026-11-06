@@ -9,6 +9,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const SERVER = fileURLToPath(new URL('../index.mjs', import.meta.url));
 const RUNNER = fileURLToPath(new URL('../../conformance/run.mjs', import.meta.url));
@@ -26,7 +28,15 @@ function freshDirectory() {
 }
 
 const clients = (directory, ...command) => execFileSync(process.execPath, [SERVER, 'clients', ...command, '--data', directory], { encoding: 'utf8' });
-const addClient = (directory, name) => /pc_[A-Za-z0-9_-]+/.exec(clients(directory, 'add', name))[0];
+const addClient = (directory, name, ...flags) => /pc_[A-Za-z0-9_-]+/.exec(clients(directory, 'add', name, ...flags))[0];
+
+/** The names of the tools a token is offered, and a function that calls one of them. */
+async function toolsFor(url, token) {
+  const client = new Client({ name: 'remote-test', version: '0.0.0' });
+  await client.connect(new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  const { tools } = await client.listTools();
+  return { names: tools.map((tool) => tool.name).sort(), call: (name, args) => client.callTool({ name, arguments: args }), close: () => client.close() };
+}
 
 /** Starts the server on a free loopback port; resolves with its /mcp URL. */
 function startHttp(directory, ...flags) {
@@ -99,6 +109,45 @@ test('a removed client is refused at once, without a restart', async () => {
   clients(directory, 'remove', 'laptop');
   assert.equal((await request(url, { token: laptop })).status, 401, 'the removed client');
   assert.equal((await request(url, { token: phone })).status, 200, 'another client');
+});
+
+test('tool groups: the server\'s default, a client\'s own, and a tool not offered is refused', async () => {
+  const directory = freshDirectory();
+  const phone = addClient(directory, 'phone');
+  const laptop = addClient(directory, 'laptop', '--tools', 'writer,entities');
+  const organizer = addClient(directory, 'organizer');
+  clients(directory, 'tools', 'organizer', 'all');
+  assert.match(clients(directory, 'list'), /laptop .*tools read, record, fields, entities/);
+  const url = await startHttp(directory, '--tools', 'assistant');
+
+  const assistant = await toolsFor(url, phone);
+  assert.deepEqual(assistant.names, ['context_pack', 'event_get_protocol', 'event_note', 'event_search'], 'the server\'s default');
+  await assert.rejects(assistant.call('event_record_expression', { eventId: 'evt_0001', actor: { kind: 'agent', id: 'phone' }, text: 'x' }), /Unknown tool/);
+  await assistant.close();
+
+  const writer = await toolsFor(url, laptop);
+  assert.deepEqual(writer.names, ['context_pack', 'entity_create', 'entity_get', 'entity_record', 'entity_search', 'event_get_protocol', 'event_note', 'event_record_expression', 'event_search']);
+  await writer.close();
+
+  const all = await toolsFor(url, organizer);
+  assert.equal(all.names.length, 14, 'every operation but the owner\'s, which need --owner-tools');
+  await all.close();
+
+  clients(directory, 'tools', 'laptop', 'default');
+  const back = await toolsFor(url, laptop);
+  assert.equal(back.names.length, 4, 'back to the server\'s default, without a restart');
+  await back.close();
+});
+
+test('an unknown tool group is refused, on the server and for a client', () => {
+  const server = spawnSync(process.execPath, [SERVER, '--tools', 'read,everything', '--data', freshDirectory()], { encoding: 'utf8' });
+  assert.equal(server.status, 2);
+  assert.match(server.stderr, /Unknown tool group "everything"/);
+  const directory = freshDirectory();
+  addClient(directory, 'phone');
+  const client = spawnSync(process.execPath, [SERVER, 'clients', 'tools', 'phone', 'nothing', '--data', directory], { encoding: 'utf8' });
+  assert.notEqual(client.status, 0);
+  assert.match(client.stderr, /Unknown tool group "nothing"/);
 });
 
 test('plain HTTP is refused on an address other machines can reach', () => {

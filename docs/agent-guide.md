@@ -64,5 +64,6 @@ DON'T ASK TO TIDY. Do not ask the user to fill in details or approve the organis
 
 - **Name the server `protocol_chaos`** in the client's MCP configuration, so that tool names read the same in every client and in any instructions written for them.
 - **Install standing instructions** where the client keeps them: `AGENTS.md` for Codex, a steering file for Kiro, `CLAUDE.md` for Claude Code, a rules file elsewhere. Clients that show neither instructions nor tool descriptions to the model need them most.
+- **Offer each client only the tools it uses.** Every tool definition offered is sent to the model with every request. An assistant that records words and leaves the rest to an organizer needs `read` and `record`; one that also brings fields up to date needs `fields`; the organizer needs everything. The reference server does this with `--tools` and, per client, `clients tools` (see its README).
 - **Avoid prompt hooks that send every prompt to the server.** They conflict with §10 of the protocol. A hook that runs on the client and decides there what to read is fine.
 - **For several computers,** run one server that every client reaches over the network, with its own credential for each client (PROTOCOL.md §9.2).
