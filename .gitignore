@@ -7,3 +7,4 @@ __pycache__/
 # Experiment runs and local model lists (keys live in eval/.env.local, covered by *.local)
 eval/runs/
 *.local.json
+eval/external/

@@ -29,6 +29,16 @@ export function errorCode(text) {
   return String(text).replace(/^出错：/u, '').split(/[。，；：:,(（\n]/u)[0].trim().slice(0, 40);
 }
 
+/** The harness's own words in tool results, in the language of the prompts (the cases' prompts are Chinese). */
+export const CHINESE_TEXTS = {
+  badArguments: '出错：参数不是一个合法的 JSON 对象。',
+  unknownTool: (name) => `出错：没有 ${name} 这个工具。`,
+};
+export const ENGLISH_TEXTS = {
+  badArguments: 'Error: the arguments are not a valid JSON object.',
+  unknownTool: (name) => `Error: there is no tool named ${name}.`,
+};
+
 /**
  * @param {object} o
  * @param {{complete: Function}} o.provider
@@ -37,10 +47,11 @@ export function errorCode(text) {
  * @param {{tools: object[], has: Function, call: Function}} o.store the arm's store, open for this conversation
  * @param {number} [o.maxModelCalls]
  * @param {string} [o.conversationId] passed to the gateway, which may use it to route the conversation to its cache
+ * @param {{badArguments: string, unknownTool: Function}} [o.texts] the harness's own words in tool results
  * @returns {Promise<{ok: boolean, reply?: string, error?: string, infrastructure?: boolean, messages: object[], requests: object[],
  *   calls: {name: string, args: object|null, error: string|null}[], toolCalls: number, toolErrors: number}>}
  */
-export async function converse({ provider, system, user, store, maxModelCalls = 25, conversationId }) {
+export async function converse({ provider, system, user, store, maxModelCalls = 25, conversationId, texts = CHINESE_TEXTS }) {
   const messages = [{ role: 'system', content: system }, { role: 'user', content: user }];
   const requests = [];
   const calls = [];
@@ -78,11 +89,11 @@ export async function converse({ provider, system, user, store, maxModelCalls = 
         if (args === null || typeof args !== 'object' || Array.isArray(args)) throw new Error('not an object');
       } catch {
         args = null;
-        result = { text: '出错：参数不是一个合法的 JSON 对象。', isError: true };
+        result = { text: texts.badArguments, isError: true };
       }
       if (!result) {
         if (!store.has(name)) {
-          result = { text: `出错：没有 ${name} 这个工具。`, isError: true };
+          result = { text: texts.unknownTool(name), isError: true };
         } else {
           try {
             result = await store.call(name, args);

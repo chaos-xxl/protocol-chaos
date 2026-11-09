@@ -79,8 +79,8 @@ export function renderDirectory(events, order = 'recent') {
   return `## 事情目录\n\n这次对话开始时库里的全部事情，共 ${events.length} 件，${sorted}。每行：id｜标题｜状态｜上级｜最后更新｜进展。\n\n${lines.join('\n')}`;
 }
 
-/** Connects as one assistant; returns {client, close}. */
-async function connect(url, token) {
+/** Connects to a server as the client whose bearer token this is; resolves with the MCP client. */
+export async function connect(url, token) {
   const client = new Client({ name: 'protocol-chaos-eval', version: '0.1.0' });
   const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers: { Authorization: `Bearer ${token}` } } });
   await client.connect(transport);
