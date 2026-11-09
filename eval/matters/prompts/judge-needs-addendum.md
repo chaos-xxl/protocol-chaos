@@ -8,8 +8,9 @@ You are also given:
 
 Apply the rating scale above, with these rules:
 - Rate 3 only if the response uses every gold fact correctly. A fact may be used implicitly, for example by recommending only the options that satisfy it.
-- A response that relies on a stale value draws the wrong conclusion: rate it at most 2, and 1 if the stale value drives the answer.
+- A response that relies on a stale value draws the wrong conclusion: rate it at most 2, and 1 if the stale value drives the answer. Relying on a value means using it as if it held now. Mentioning an earlier value as history (for example, "the budget went from X to Y") is not relying on it.
 - A constraint set on a parent matter also holds for its parts.
+- The memories hold every matter of the user's store. A detail that comes from one of them is not invented, even when it is not among the gold facts; whether using it was appropriate is not part of this rating.
 - Say separately whether the response relied on any stale value.
 
 OUTPUT FORMAT (this replaces the format above)

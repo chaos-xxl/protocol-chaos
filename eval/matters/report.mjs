@@ -56,8 +56,13 @@ export function extras(records, requests, similarity) {
   return out;
 }
 
-/** The report of a set of matter-benchmark runs as Markdown. */
-export function renderReport(analysis, more, manifests, requests) {
+/** The records with each answer's first verdict, where it was judged again (README.md, "Changes"). */
+export const asRun = (records) => records.map((r) => ({
+  ...r, epochs: (r.epochs ?? []).map((e) => ('judgmentAsRun' in e ? { ...e, judgment: e.judgmentAsRun } : e)),
+}));
+
+/** The report of a set of matter-benchmark runs as Markdown. `first` holds the analysis with the first verdicts, when some were judged again. */
+export function renderReport(analysis, more, manifests, requests, first = null) {
   const lines = ['# Matter benchmark: requests answered from a store of about 150 matters', ''];
   for (const m of manifests) lines.push(`- Run ${m.name}: model ${m.model.id}, judge ${m.judge.id}, started ${m.startedAt}, code ${m.git?.commit?.slice(0, 7) ?? '?'}${m.git?.dirty ? ' (uncommitted changes)' : ''}, ${m.requests} requests.`);
   const count = (kind) => requests.filter((r) => r.kind === kind).length;
@@ -88,6 +93,17 @@ export function renderReport(analysis, more, manifests, requests) {
       lines.push('', 'What the map conditions opened (a matter counts once per answer):', '', '| Condition | Needs: opened every needed matter | Needs: opened at least one | Needs: matters opened, mean | Adjacent: opened the look-alike matter | Adjacent: opened none | Unrelated: opened none | Searches per answer |', '|---|---|---|---|---|---|---|---|');
       for (const [condition, o] of opened) lines.push(`| ${condition} | ${pct(o.needsAll)} | ${pct(o.needsAny)} | ${Number.isFinite(o.needsOpened) ? o.needsOpened.toFixed(2) : '—'} | ${pct(o.adjacentOpened)} | ${pct(o.adjacentNone)} | ${pct(o.unrelatedNone)} | ${Number.isFinite(o.searches) ? o.searches.toFixed(2) : '—'} |`);
     }
+    if (first && first.analysis.models.includes(model)) {
+      lines.push('', 'Needs requests with the first verdicts, before the needs judge was corrected (README.md, "Changes"), and now:', '', '| Condition | Missed, first verdicts | Missed, now | Stale, first verdicts | Stale, now |', '|---|---|---|---|---|');
+      for (const condition of CONDITIONS) {
+        const was = first.analysis.cells[key(model, condition, 'beneficial_memory_usage')];
+        const now = analysis.cells[key(model, condition, 'beneficial_memory_usage')];
+        if (!was || !now) continue;
+        const sw = first.more.stale[key(model, condition)];
+        const sn = more.stale[key(model, condition)];
+        lines.push(`| ${condition} | ${pct(was.rate)} (${was.failures}/${was.counted}) | ${pct(now.rate)} (${now.failures}/${now.counted}) | ${pct(sw?.rate)} (${sw?.stale ?? 0}/${sw?.judged ?? 0}) | ${pct(sn?.rate)} (${sn?.stale ?? 0}/${sn?.judged ?? 0}) |`);
+      }
+    }
     const h = analysis.hypotheses[model];
     const h4 = analysis.comparisons[key(model, 'beneficial_memory_usage', 'protocol', 'files')];
     lines.push('', 'Decision rules written down before the runs:', '');
@@ -113,8 +129,17 @@ export function writeReport(runDirs, { cache }) {
   }
   const manifests = runDirs.filter((d) => existsSync(join(d, 'manifest.json'))).map((d) => JSON.parse(readFileSync(join(d, 'manifest.json'), 'utf8')));
   const target = runDirs[0];
-  writeJson(join(target, 'summary.json'), { runs: manifests.map((m) => m.name), ...analysis, ...more });
-  writeFileAtomic(join(target, 'report.md'), renderReport(analysis, more, manifests, requests));
+  const judgedAgain = records.some((r) => (r.epochs ?? []).some((e) => 'judgmentAsRun' in e));
+  let first = null;
+  if (judgedAgain) {
+    const before = asRun(records);
+    first = { analysis: analyze(before), more: extras(before, requests, similarity) };
+  }
+  writeJson(join(target, 'summary.json'), {
+    runs: manifests.map((m) => m.name), ...analysis, ...more,
+    ...(first ? { firstVerdicts: { cells: first.analysis.cells, hypotheses: first.analysis.hypotheses, stale: first.more.stale } } : {}),
+  });
+  writeFileAtomic(join(target, 'report.md'), renderReport(analysis, more, manifests, requests, first));
   writeFileAtomic(join(target, 'chart.svg'), renderChart(analysis, []));
   process.stderr.write(`Report: ${join(target, 'report.md')} (${records.length} records)\n`);
 }

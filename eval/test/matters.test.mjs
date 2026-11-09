@@ -10,7 +10,7 @@ import {
   CONDITIONS, EMPTY_BLOCK, checkLeak, checkNeeds, entriesBlock, judge, makeCase, openCondition, parseAdjacent, parseRequests, partitionBlock,
   probesText, readsOf, refillMessage, runItem, statusLine, topTitles, withAncestors, writeStores,
 } from '../matters/bench.mjs';
-import { extras, renderReport } from '../matters/report.mjs';
+import { asRun, extras, renderReport } from '../matters/report.mjs';
 import { analyze } from '../selection/report.mjs';
 
 const root = mkdtempSync(join(tmpdir(), 'protocol-chaos-matters-'));
@@ -180,6 +180,8 @@ test('the needs judge gets the facts and the stale values; an unreadable verdict
   assert.match(seen, /<gold_facts>\n- 每天走路不超过一万五千步/);
   assert.match(seen, /<stale_values>\n- 每天不超过一万步/);
   assert.match(seen, /【2026 年陪外婆出门走走】状态：进行中｜目标/);
+  // Every matter of the store, not only the ones the request needs: a detail from another is not invented.
+  assert.match(seen, /【2026 年 3 月学做麻婆豆腐】/);
   const bad = await judge({ provider: createScriptedProvider(() => ({ content: 'no json' })), prompts, kase, request: adjacent, reply: 'x' });
   assert.equal(bad.ok, false);
   assert.equal(bad.attempts, 3);
@@ -230,4 +232,10 @@ test('the report: rates by kind, stale values, what the maps opened, H4', () => 
   const text = renderReport(analysis, more, [], [needs, adjacent, unrelated]);
   assert.match(text, /H4, protocol misses less than files: does not hold/);
   assert.match(text, /\| flat \| 50\.0% \(1\/2\)/);
+  // Judged again: the first verdicts are reported next to the new ones.
+  const again = records.map((r) => (r.kind === 'needs' ? { ...r, epochs: r.epochs.map((e) => ({ ...e, judgmentAsRun: e.judgment, judgment: { ok: true, score: 3, stale: false } })) } : r));
+  const before = asRun(again);
+  assert.deepEqual(before.map((r) => r.epochs[0].judgment.score), records.map((r) => r.epochs[0].judgment.score));
+  const both = renderReport(analyze(again, { draws: 200 }), extras(again, [needs, adjacent, unrelated], {}), [], [needs, adjacent, unrelated], { analysis: analyze(before, { draws: 200 }), more: extras(before, [needs, adjacent, unrelated], {}) });
+  assert.match(both, /\| flat \| 100\.0% \(1\/1\) \| 0\.0% \(0\/1\) \| 100\.0% \(1\/1\) \| 0\.0% \(0\/1\) \|/);
 });

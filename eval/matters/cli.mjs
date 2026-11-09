@@ -11,6 +11,9 @@
 //       [--limit N] [--concurrency N] [--cache DIR]
 //       Answers every kept request in every condition and judges the answers. Run it again with
 //       the same --out to continue; it refuses if the prompts, the requests, the cache or the code changed.
+//   node --env-file=eval/.env.local eval/matters/cli.mjs rejudge DIR [DIR ...] --judge ID [--kinds needs]
+//       Judges the answers of finished runs again with the current judge prompts, keeping the
+//       first verdicts (README.md, "Changes").
 //   node eval/matters/cli.mjs report DIR [DIR ...]
 //       Writes report.md, summary.json and chart.svg into the first DIR.
 import { execFileSync } from 'node:child_process';
@@ -23,7 +26,7 @@ import { renderEntry } from '../lib/render.mjs';
 import { pause, random, readJson, runLimited, seedOf, sha256, shuffle, writeJson } from '../lib/util.mjs';
 import { InfrastructureError, classify, cosine, embed } from '../selection/persistbench.mjs';
 import {
-  CONDITIONS, KINDS, checkLeak, checkNeeds, loadCases, loadPrompts, runItem, withAncestors, writeRefill, writeRequests, writeStores,
+  CONDITIONS, KINDS, checkLeak, checkNeeds, judge, loadCases, loadPrompts, runItem, withAncestors, writeRefill, writeRequests, writeStores,
 } from './bench.mjs';
 import { writeReport } from './report.mjs';
 
@@ -353,6 +356,71 @@ async function run(values) {
   if (stopped) fail('Stopped: the infrastructure kept failing.');
 }
 
+// ---- rejudge ----
+
+const recordFiles = (dir) => {
+  const out = [];
+  const walk = (d) => {
+    for (const name of readdirSync(d)) {
+      const path = join(d, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (name.endsWith('.json')) out.push(path);
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return out.sort();
+};
+
+/**
+ * Judges the answers of finished runs again with the current judge prompts (README.md,
+ * "Changes"). The first verdict of each answer is kept as judgmentAsRun; an answer already
+ * judged with these prompts is left as it is, so that the command continues where it stopped.
+ */
+async function rejudge(values, dirs) {
+  const list = models(values);
+  const judgeModel = find(list, values.judge ?? fail('--judge ID is required'), 'judge');
+  const prompts = loadPrompts();
+  const kinds = (values.kinds ?? 'needs').split(',');
+  if (!kinds.every((k) => KINDS.includes(k))) fail(`--kinds takes ${KINDS.join(', ')}`);
+  const byId = new Map(loadCases(resolve(values.pilot ?? DEFAULT_PILOT)).map((c) => [c.id, c]));
+  const requests = new Map(readCache('requests.json', { kept: [] }).kept.map((r) => [r.id, r]));
+  const provider = createProvider(judgeModel);
+  const mark = sha256(JSON.stringify([judgeModel.id, prompts.hashes.judgeNeeds, prompts.hashes.judgeLeakage, codeHash()]));
+  for (const dir of dirs) {
+    const files = recordFiles(join(dir, 'items')).filter((f) => kinds.includes(readJson(f).kind));
+    let done = 0;
+    let left = 0;
+    await runLimited(files.map((file) => async () => {
+      const record = readJson(file);
+      const kase = byId.get(record.case);
+      const request = requests.get(record.sample);
+      if (!kase || !request) fail(`${file}: its case or request is not in the cache`);
+      for (const epoch of record.epochs) {
+        if (!epoch.ok || epoch.rejudged === mark) continue;
+        try {
+          const verdict = await judge({ provider, prompts, kase, request, reply: epoch.reply });
+          if (!('judgmentAsRun' in epoch)) epoch.judgmentAsRun = epoch.judgment ?? null;
+          epoch.judgment = verdict;
+          epoch.rejudged = mark;
+          writeJson(file, record, 0o600);
+        } catch (error) {
+          if (!(error instanceof InfrastructureError)) throw error;
+          left += 1;
+          say(`${record.sample} ${record.condition}: left for the next rejudge: ${error.message.slice(0, 120)}`);
+        }
+      }
+      done += 1;
+      if (done % 20 === 0 || done === files.length) say(`${basename(dir)}: ${done}/${files.length} records`);
+    }), Number(values.concurrency ?? 16));
+    const manifestFile = join(dir, 'manifest.json');
+    const manifest = readJson(manifestFile);
+    (manifest.rejudged ??= []).push({ at: new Date().toISOString(), judge: judgeModel.id, kinds, prompts: prompts.hashes, code: codeHash(), git: gitState(), mark, left });
+    writeJson(manifestFile, manifest);
+    say(`${basename(dir)}: judged again${left ? `, ${left} answers left for the next rejudge` : ''}`);
+  }
+  writeReport(dirs, { cache: CACHE });
+}
+
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
@@ -365,5 +433,6 @@ if (values.cache) CACHE = resolve(values.cache);
 const [command, ...rest] = positionals;
 if (command === 'prepare') await prepare(values);
 else if (command === 'run') await run(values);
+else if (command === 'rejudge') await rejudge(values, rest.length ? rest.map((d) => resolve(d)) : fail('rejudge DIR [DIR ...] --judge ID [--kinds needs]'));
 else if (command === 'report') writeReport(rest.length ? rest.map((d) => resolve(d)) : fail('report DIR [DIR ...]'), { cache: CACHE });
-else fail('Commands: prepare, run, report. See the top of eval/matters/cli.mjs.');
+else fail('Commands: prepare, run, rejudge, report. See the top of eval/matters/cli.mjs.');

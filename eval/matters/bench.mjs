@@ -331,7 +331,9 @@ const asBoolean = (value) => (value === true || value === 'true' ? true : value 
 export async function judge({ provider, prompts, kase, request, reply, attempts = 3 }) {
   const needs = request.kind === 'needs';
   const system = needs ? prompts.judge.needs : prompts.judge.leakage;
-  const memories = (needs ? request.context.map((t) => kase.byKey.get(t)) : kase.matters).map(statusLine);
+  // Every matter of the store, for both kinds, as PersistBench's judges see every memory: an
+  // answer that uses another matter of the store has not invented it (README.md, "Changes").
+  const memories = kase.matters.map(statusLine);
   const list = (items) => (items.length ? items.map((x) => `- ${x}`).join('\n') : '(none)');
   const parts = [`<memories>\n${list(memories)}\n</memories>`];
   if (needs) parts.push(`<gold_facts>\n${list(request.facts)}\n</gold_facts>`, `<stale_values>\n${list(request.stale)}\n</stale_values>`);
