@@ -238,8 +238,9 @@ class PluginTest(unittest.TestCase):
         content, max_chars = host.sections["protocol-chaos.overview"]
         text = content({})
         self.assertLessEqual(len(text), max_chars)
-        self.assertIn("2027 年春天葡萄牙行 · active · Looking at routes", text)
+        self.assertIn("  - 2027 年春天葡萄牙行 · Looking at routes", text)  # active: no state, then where it stands
         self.assertIn("  - 2027 年葡萄牙行机票 · emerging", text)  # a part, under its parent
+        self.assertNotIn(" · active", text)
         self.assertNotIn("护照", text)  # done
         self.assertNotIn("evt_", text)
         self.assertNotIn("walk in Portugal", text)  # words stay out of the overview
@@ -658,6 +659,65 @@ class HelperTest(unittest.TestCase):
         self.assertLessEqual(len(listed), self.plugin.CAPTURE_LIST_CHARS)
         self.assertTrue(refs)
         self.assertTrue(all(ref in listed for ref in refs))
+
+    @staticmethod
+    def entry(key, title, state="active", parents=(), updated="2026-09-01T00:00:00.000Z", progress=None):
+        found = {"id": key, "title": title, "state": state, "parents": list(parents), "updatedAt": updated}
+        if progress:
+            found["progress"] = {"text": progress, "timestamp": updated}
+        return found
+
+    def test_the_overview_lists_the_most_recent_change_first_and_counts_set_aside_matters(self):
+        entry = self.entry
+        entries = [  # the directory's order: most recently updated first
+            entry("tokyo", "2025 年东京行", state="done", updated="2026-11-09T01:00:00.000Z"),
+            entry("job", "2026 年秋天找工作", state="waiting", parents=["career"], updated="2026-11-09T00:00:00.000Z",
+                  progress="Waiting on two replies"),
+            entry("kitchen", "2026 年厨房翻新", updated="2026-11-08T00:00:00.000Z", progress="Tiles chosen"),
+            entry("lamp", "客厅灯具调试", state="dormant", parents=["home"], updated="2026-11-07T00:00:00.000Z"),
+            entry("home", "新家装修", updated="2026-10-20T00:00:00.000Z"),
+            entry("career", "职业方向", updated="2026-09-01T00:00:00.000Z"),
+        ]
+        text = self.plugin.overview_text(entries, 3900)
+        lines = text.split("\n")
+        # A long-lived matter whose part changed last comes first, though it changed itself long ago;
+        # a set-aside part does not move its matter up.
+        self.assertEqual(lines[2:], [
+            "- 职业方向",
+            "  - 2026 年秋天找工作 · waiting · Waiting on two replies",
+            "- 2026 年厨房翻新 · Tiles chosen",
+            "- 新家装修",
+            "- and 1 set aside (dormant), not listed",
+        ])
+        self.assertNotIn("东京", text)  # done
+        only_set_aside = self.plugin.overview_text([entry("lamp", "客厅灯具调试", state="dormant")], 3900)
+        self.assertTrue(only_set_aside.endswith("\n- and 1 set aside (dormant), not listed"))
+        self.assertTrue(self.plugin.overview_text([], 3900).endswith("\n- (none yet)"))
+        # Every line comes before any progress: with less room, the titles stay and the progress goes.
+        tight = self.plugin.overview_text(entries, len(text) - 10)
+        self.assertIn("  - 2026 年秋天找工作 · waiting · Waiting on two replies", tight)
+        self.assertIn("- 2026 年厨房翻新\n", tight)
+        # A cycle a server should have refused still shows, and ends.
+        cycle = [entry("a", "甲", parents=["b"]), entry("b", "乙", parents=["a"])]
+        self.assertIn("甲", self.plugin.overview_text(cycle, 3900))
+
+    def test_a_full_overview_keeps_the_most_recent_with_the_matters_they_sit_under(self):
+        entry = self.entry
+        entries = [
+            entry("recent", "2026 年 11 月路由器断网排查", parents=["network"], updated="2026-11-09T00:00:00.000Z"),
+            entry("other", "2027 年春天葡萄牙行", updated="2026-11-08T00:00:00.000Z"),
+            entry("old", "新家装修与全屋智能", updated="2026-09-02T00:00:00.000Z"),
+            entry("network", "家庭网络与智能家居", parents=["old"], updated="2026-09-02T00:00:00.000Z"),
+        ] + [entry(f"part{i:02d}", f"装修第 {i} 项：一件很久没提的收尾工作", parents=["old"]) for i in range(60)]
+        budget = 1200
+        text = self.plugin.overview_text(entries, budget)
+        self.assertLessEqual(len(text), budget)
+        for title in ("- 新家装修与全屋智能", "  - 家庭网络与智能家居", "    - 2026 年 11 月路由器断网排查",
+                      "- 2027 年春天葡萄牙行"):
+            self.assertIn(title + "\n", text)
+        listed = sum(1 for line in text.split("\n")[2:] if line.lstrip().startswith("- ") and "…" not in line)
+        self.assertTrue(text.endswith(f"\n- … and {len(entries) - listed} more (context_pack lists every matter)"))
+        self.assertLess(listed, len(entries))
 
     def test_structure_patch_and_newer_writes(self):
         patch = self.plugin.structure_patch

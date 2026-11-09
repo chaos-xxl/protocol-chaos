@@ -1,12 +1,14 @@
 # Protocol Chaos for Hermes
 
-Tell any of your assistants about a plan, a change or a decision, and Hermes knows it too.
-Your long-lived matters (a trip next spring, a renovation, a job search, a five-year goal) live
-on your own [Protocol Chaos](https://github.com/chaos-xxl/protocol-chaos) server, which Hermes
-and your other assistants (Codex, Claude Code, Kiro, anything that can use an MCP server) all
-read and write. Each records what you tell it. Once a day Hermes folds everything they
-recorded into one record per matter: where it stands, what it is for, its limits and plan, and
-who said what, when.
+Memory recalls what you said. Protocol Chaos keeps track of where things stand.
+
+Each of your long-lived matters (a trip next spring, a renovation, a job search, a five-year
+goal) has one record on your own [Protocol Chaos](https://github.com/chaos-xxl/protocol-chaos)
+server, built from your own words: where it stands, what it is for, its limits and plan, the
+larger matter it belongs to and its parts, and who said what, when. Hermes and your other
+assistants (Codex, Claude Code, Kiro, anything that can use an MCP server) share these records.
+Hermes reads them before it answers and updates them after, without a tool call, and a bundled
+organizer folds in once a day what every assistant recorded.
 
 It is not a memory provider and does not replace yours: it runs beside it. Your matters stay on
 your server, and the server never sees your messages, only the words recorded from them.
@@ -14,10 +16,12 @@ your server, and the server never sees your messages, only the words recorded fr
 This plugin connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to that
 server, and the repository never holds up a reply:
 
-- **Before the model answers.** When a session starts, an overview of your open matters goes
-  into the system prompt. On each message, the plugin compares the message with the matters'
-  titles on this machine; for the few it plainly names, it reads their goal, constraints,
-  plan, progress and latest words by id and adds them to the turn.
+- **Before the model answers.** When a session starts, a map of your open matters goes into
+  the system prompt: one line each, parts under the matter they belong to, the ones that
+  changed most recently first, and where the latest stand; matters you set aside are counted,
+  not listed. On each message, the plugin compares the message with the matters' titles on
+  this machine; for the few it plainly names, it reads their goal, constraints, plan, progress
+  and latest words by id and adds them to the turn.
 - **After the model answers.** In a background thread, Hermes's recording model decides
   whether your message changes one of your matters or starts one, and which. If so, the
   plugin records your words with `event_note`, copied from the message itself, so they are
@@ -103,7 +107,7 @@ Hermes asks for two values and keeps them with your other credentials:
 Restart Hermes (and the gateway, if one runs). The log then shows one line:
 
 ```text
-protocol-chaos 0.3.0: overview in system prompt, recording background, structure auto
+protocol-chaos 0.3.1: overview in system prompt, recording background, structure auto
 ```
 
 `overview in first turn` on a Hermes without system prompt sections; `recording model` where

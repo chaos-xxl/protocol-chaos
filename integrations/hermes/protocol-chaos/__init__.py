@@ -6,9 +6,11 @@ what to read (PROTOCOL.md §10): the server receives requests for its directory,
 particular Events by id, and the words being recorded. It never receives the messages
 themselves.
 
-- When a session starts, the directory of open Events (titles, states, parts, progress) goes
-  into the system prompt, so the model knows what the user has going on. Scheduled jobs get
-  none.
+- When a session starts, a map of the open Events goes into the system prompt, so the model
+  knows what the user has going on: one line each (title, parts indented under it, the state
+  unless it is active), the ones with the most recent change beneath them first, and where the
+  most recent stand while there is room. Set-aside (dormant) Events are counted, not listed.
+  Scheduled jobs get none.
 - ``pre_llm_call``: the message is compared with the directory's titles on this machine. For
   the few Events it plainly names, their goal, constraint, plan, progress and latest words are
   read by id and added to the turn, with their ids.
@@ -54,7 +56,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("protocol_chaos")
 
-PLUGIN_VERSION = "0.3.0"
+PLUGIN_VERSION = "0.3.1"
 URL_SECRET = "PROTOCOL_CHAOS_URL"
 TOKEN_SECRET = "PROTOCOL_CHAOS_TOKEN"
 READ_TIMEOUT = 6.0
@@ -65,6 +67,10 @@ DIRECTORY_MAX = 2000
 DIRECTORY_FRESH_SECONDS = 30.0
 PROMPT_SECTION_CHARS = 3900  # Hermes caps a plugin's system prompt section at 4,000
 TURN_OVERVIEW_CHARS = 5000
+# The overview is a map: every open matter gets its line before any gets its progress.
+OVERVIEW_TITLE_CHARS = 60
+OVERVIEW_PROGRESS_CHARS = 60
+SET_ASIDE = "dormant"  # open, but counted in the overview rather than listed
 # Hermes moves hook context above 10,000 characters to a file and shows the model a preview.
 MAX_TURN_CONTEXT_CHARS = 9500
 RELATED_MAX = 3
@@ -439,23 +445,96 @@ def forest(entries: list) -> list:
     return out
 
 
+def placement(entries: list) -> dict:
+    """id -> the parent ``forest`` lists that entry under: the first of its parents that is also
+    listed, or None."""
+    listed = {entry["id"] for entry in entries}
+    return {entry["id"]: next((p for p in entry.get("parents") or [] if p in listed and p != entry["id"]), None)
+            for entry in entries}
+
+
+def by_recent_activity(entries: list) -> list:
+    """The entries in the order that makes ``forest`` list, at every level, the matter with the most
+    recent change anywhere beneath it first: a long-lived matter whose part changed today comes
+    before one that changed itself yesterday. Ties keep the directory's order."""
+    under = placement(entries)
+    stamp = {entry["id"]: str(entry.get("updatedAt") or "") for entry in entries}
+    latest = dict(stamp)
+    for key in stamp:
+        seen = {key}
+        parent = under.get(key)
+        while parent is not None and parent not in seen:  # a cycle a server should have refused ends here
+            if stamp[key] > latest[parent]:
+                latest[parent] = stamp[key]
+            seen.add(parent)
+            parent = under.get(parent)
+    position = {entry["id"]: i for i, entry in enumerate(entries)}
+    return sorted(entries, key=lambda entry: (latest[entry["id"]], -position[entry["id"]]), reverse=True)
+
+
 def overview_text(entries: list, budget: int) -> str:
-    open_entries = [entry for entry in entries if entry.get("state") in OPEN_STATES]
+    """The open matters as a map. Every open matter gets one line (its title, and its state unless
+    it is active), parts indented under the matter they belong to, the ones with the most recent
+    change beneath them first. Then, while the budget allows, the most recently changed also say
+    where they stand. Set-aside (dormant) matters are counted, not listed. When not every line
+    fits, the most recently changed are kept, each with the matters it sits under, and the rest
+    are counted."""
+    shown = [entry for entry in entries if entry.get("state") in OPEN_STATES and entry.get("state") != SET_ASIDE]
+    set_aside = len({entry["id"] for entry in entries if entry.get("state") == SET_ASIDE})
     head = [
         f"{OVERVIEW_MARKER}, from their own Protocol Chaos repository (the client's overview, not their words).",
-        "Open matters, most recently updated first; indented ones are parts of the one above.",
+        "Open matters, most recent change first; indented ones are parts of the one above. "
+        "The state is given unless it is active; the latest also say where they stand.",
     ]
-    if not open_entries:
-        return "\n".join([*head, "- (none yet)"])
-    lines = []
-    for depth, entry in forest(open_entries):
-        parts = [clip(entry.get("title") or "(untitled)", 80), str(entry.get("state"))]
-        progress = (entry.get("progress") or {}).get("text") if isinstance(entry.get("progress"), dict) else None
-        if progress:
-            parts.append(clip(progress, 60))
-        lines.append("  " * depth + "- " + " · ".join(parts))
-    body = fit_lines(lines, budget - len("\n".join(head)) - 1, "- … and {} more (context_pack lists every matter)")
-    return "\n".join([*head, body]) if body else "\n".join(head)
+    tail = [f"- and {set_aside} set aside (dormant), not listed"] if set_aside else []
+    if not shown:
+        return "\n".join([*head, *(tail or ["- (none yet)"])])
+    pairs = forest(by_recent_activity(shown))
+    order = [entry["id"] for _, entry in pairs]
+    entry_of = {entry["id"]: entry for _, entry in pairs}
+    line_of = {}
+    for depth, entry in pairs:
+        line = "  " * depth + "- " + clip(entry.get("title") or "(untitled)", OVERVIEW_TITLE_CHARS)
+        if entry.get("state") != "active":
+            line += f" · {entry.get('state')}"
+        line_of[entry["id"]] = line
+    room = budget - len("\n".join([*head, *tail])) - 1
+    newest = sorted(order, key=lambda key: str(entry_of[key].get("updatedAt") or ""), reverse=True)
+    size = len("\n".join(line_of[key] for key in order))
+    if size <= room:
+        for key in newest:
+            progress = entry_of[key].get("progress")
+            text = progress.get("text") if isinstance(progress, dict) else None
+            if not text:
+                continue
+            addition = " · " + clip(text, OVERVIEW_PROGRESS_CHARS)
+            if size + len(addition) > room:
+                break
+            line_of[key] += addition
+            size += len(addition)
+        body = "\n".join(line_of[key] for key in order)
+    else:
+        under = placement([entry_of[key] for key in order])
+        kept: set = set()
+        used = 0
+        note = f"- … and {len(order)} more (context_pack lists every matter)"
+        for key in newest:
+            chain: list = []
+            node = key
+            while node is not None and node not in kept and node not in chain:
+                chain.append(node)
+                node = under.get(node)
+            extra = sum(len(line_of[item]) + 1 for item in chain)
+            more = f"- … and {len(order) - len(kept) - len(chain)} more (context_pack lists every matter)"
+            if used + extra + len(more) > room:
+                break
+            kept.update(chain)
+            used += extra
+            note = more
+        body = "\n".join([*(line_of[key] for key in order if key in kept), note])
+        if len(body) > room:
+            body = ""
+    return "\n".join([*head, body, *tail]) if body else "\n".join([*head, *tail])
 
 
 def matter_text(result: dict, by_id: dict, children: dict) -> str:
