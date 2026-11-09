@@ -34,4 +34,4 @@ node eval/guide/cli.mjs report --guide eval/runs/pg-v4pro --without eval/runs/pb
 
 ## Changes
 
-None yet.
+- 11-09, minutes after the two runs started, before any of their results: Qwen3-235B-A22B-Instruct-2507 is added as a third model, secondary like GPT-4o mini (`eval/runs/pg-qwen235b`). Its runs without the guide had just ended, and they show the bare map's misses most strongly (the protocol map read nothing for 68% of the beneficial samples, and missed 89% of them).
