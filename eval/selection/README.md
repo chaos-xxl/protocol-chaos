@@ -70,4 +70,5 @@ node eval/selection/cli.mjs run --dry --limit 3 --cache DIR --out DIR   # the wh
 
 ## Changes
 
-None yet.
+- 11-09, after the runs started and before any rate by condition was looked at: Qwen3-235B-A22B-Instruct-2507, the calibration model, is also run in `partition`, `retrieval`, `files` and `protocol` (`eval/runs/pb-qwen235b-rest`, with its `flat` run). It is a secondary model: reported apart from the two answering models, outside the decision rules and Holm's correction. It gives a replication point for `partition` against Zhao et al.'s own numbers for this model (leakage 80.0% in `flat`, 66.5% with the dynamic partition).
+- Operational, no change to what is measured: the V4 Pro run went from 16 to 32 items at a time, and the 4B run from 4 to 16 (so that the local model is not idle while the judge works).
