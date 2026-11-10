@@ -1,12 +1,14 @@
 """Offline replay of the Hermes plugin's router on the matter benchmark's stores and requests.
 
-No network and no model: the plugin's own rank() and matter_text() are imported unchanged and
-given each store's directory and matters, the way the server would return them. See README.md.
+No network and no model: the plugin's own picking (related_matters() where the plugin has it,
+rank() before that) and matter_text() are imported unchanged and given each store's directory
+and matters, the way the server would return them. See README.md.
 
-Usage: python3 eval/router/replay.py <matters-cache> <out-directory>
+Usage: python3 eval/router/replay.py <matters-cache> <out-directory> [--plugin <__init__.py>]
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import math
@@ -20,14 +22,26 @@ ROOT = Path(__file__).resolve().parents[2]
 PLUGIN = ROOT / "integrations" / "hermes" / "protocol-chaos" / "__init__.py"
 
 
-def load_plugin():
-    spec = importlib.util.spec_from_file_location("protocol_chaos_plugin", PLUGIN)
+def load_plugin(path: Path):
+    spec = importlib.util.spec_from_file_location("protocol_chaos_plugin", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-pc = load_plugin()
+ARGS = sys.argv[1:]
+if "--plugin" in ARGS:
+    at = ARGS.index("--plugin")
+    PLUGIN = Path(ARGS[at + 1]).resolve()
+    del ARGS[at:at + 2]
+pc = load_plugin(PLUGIN)
+
+
+def shipped(r: dict, entries: list) -> list:
+    """What the plugin puts in a turn for this request: its picking step as it is in the file."""
+    if hasattr(pc, "related_matters"):
+        return pc.related_matters(r["request"], entries)
+    return pc.rank(r["request"], entries, pc.RELATED_MIN_SCORE, pc.RELATED_MAX)
 NUMBER = re.compile(r"\d[\d,.:/\-]*\d|\d")
 
 
@@ -80,7 +94,7 @@ def rank_embedding(request_id: str, entries: list, similarity: dict, limit: int)
 
 
 ROUTERS = {
-    "plugin": lambda r, e, res, sim: pc.rank(r["request"], e, pc.RELATED_MIN_SCORE, pc.RELATED_MAX),
+    "plugin": lambda r, e, res, sim: shipped(r, e),
     "plugin-0.5": lambda r, e, res, sim: pc.rank(r["request"], e, 0.5, pc.RELATED_MAX),
     "fields": lambda r, e, res, sim: rank_fields(r["request"], e, res, pc.RELATED_MIN_SCORE, pc.RELATED_MAX),
     "embed-3": lambda r, e, res, sim: rank_embedding(r["id"], e, sim, 3),
@@ -136,7 +150,7 @@ def main(cache: Path, out: Path) -> None:
     for r in requests:
         entries, results = stores[r["case"]]
         start = time.perf_counter()
-        pc.rank(r["request"], entries, pc.RELATED_MIN_SCORE, pc.RELATED_MAX)
+        shipped(r, entries)
         timings.append(time.perf_counter() - start)
         row = {"id": r["id"], "kind": r["kind"], "request": r["request"], "routers": {}}
         for name, router in ROUTERS.items():
@@ -161,11 +175,14 @@ def main(cache: Path, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     (out / "picks.json").write_text(json.dumps(records, ensure_ascii=False, indent=1))
 
+    digest = hashlib.sha256(PLUGIN.read_bytes()).hexdigest()[:12]
     lines = ["# Router replay on the matter benchmark", "",
+             f"Plugin {getattr(pc, 'PLUGIN_VERSION', '?')}, file sha256 {digest}"
+             f"{'; picking with related_matters()' if hasattr(pc, 'related_matters') else '; picking with rank()'}.", "",
              f"{len(requests)} requests ({sum(r['kind'] == 'needs' for r in requests)} needs, "
              f"{sum(r['kind'] == 'adjacent' for r in requests)} adjacent, "
              f"{sum(r['kind'] == 'unrelated' for r in requests)} unrelated) on {len(stores)} stores. "
-             f"`rank()` takes {1000 * statistics.mean(timings):.1f} ms on average "
+             f"Picking takes {1000 * statistics.mean(timings):.1f} ms on average "
              f"(max {1000 * max(timings):.1f} ms) on a directory of about 150 matters.", "",
              "| Router | Needs: all picked | Needs: any picked | Parents picked | Facts in pushed text | "
              "Adjacent: resembled picked | Unrelated: anything picked | Matters per turn (needs / adjacent / unrelated) | "
@@ -215,4 +232,4 @@ def main(cache: Path, out: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]))
+    main(Path(ARGS[0]), Path(ARGS[1]))
