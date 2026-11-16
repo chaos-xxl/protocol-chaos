@@ -1,5 +1,5 @@
 name: protocol-chaos
-version: 0.3.1
+version: 0.3.2
 description: "Protocol Chaos for Hermes: the user's long-lived matters, kept on their own server, are in the conversation before the model answers; after it answers, the user's words are recorded and folded into that matter's goal, constraint, plan, progress and state, which every assistant on the server reads. Hermes decides on this machine what to read; the server never sees the messages."
 author: chaos-xxl
 license: Apache-2.0
@@ -39,3 +39,9 @@ config_schema:
     default: auto
     label: "Overview"
     description: "Where the overview of the user's matters goes: the system prompt (auto, prompt), the first turn's message (turn), or nowhere (off)."
+  related:
+    type: str
+    choices: ["on", "off"]
+    default: "off"
+    label: "Related matters"
+    description: "off: the model reads the overview and opens the matters a message is about itself, with the protocol_chaos MCP server; on: before each answer, the plugin picks up to three matters from their titles and adds their details to the turn."

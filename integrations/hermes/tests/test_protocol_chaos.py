@@ -238,19 +238,40 @@ class PluginTest(unittest.TestCase):
         content, max_chars = host.sections["protocol-chaos.overview"]
         text = content({})
         self.assertLessEqual(len(text), max_chars)
-        self.assertIn("  - 2027 年春天葡萄牙行 · Looking at routes", text)  # active: no state, then where it stands
-        self.assertIn("  - 2027 年葡萄牙行机票 · emerging", text)  # a part, under its parent
+        # active: no state; then its id, for the model to open it itself; then where it stands
+        self.assertIn(f"  - 2027 年春天葡萄牙行 [id:{self.trip}] · Looking at routes", text)
+        self.assertIn(f"  - 2027 年葡萄牙行机票 · emerging [id:{self.flights}]", text)  # a part, under its parent
+        self.assertIn("call event_get_protocol with its id", text)
         self.assertNotIn(" · active", text)
         self.assertNotIn("护照", text)  # done
-        self.assertNotIn("evt_", text)
         self.assertNotIn("walk in Portugal", text)  # words stay out of the overview
         self.assertIn("Recording happens in the background", text)
         self.assertEqual(host.tasks, {"protocol_chaos_capture": "compression"})
         self.assertIn("organizer", host.skills)
         self.assertTrue(host.skills["organizer"].is_file())
 
-    def test_a_message_that_names_a_matter_gets_its_details_once(self):
+    def test_by_default_nothing_is_added_before_the_answer_and_only_the_directory_is_read(self):
         host, plugin = self.loaded()
+        sent = []
+        original = self.plugin.Repository._post
+
+        def spy(repo, body, timeout, retry):
+            sent.append(json.loads(body.decode("utf-8"))["params"]["name"])
+            return original(repo, body, timeout, retry)
+
+        self.plugin.Repository._post = spy
+        try:
+            self.assertIsNone(plugin.pre_llm_call(session_id="d1", user_message="葡萄牙那趟要不要改成秋天？", conversation_history=[]))
+        finally:
+            self.plugin.Repository._post = original
+        self.assertEqual(set(sent), {"context_pack"})
+        on = NewHermes(settings={"related": "on"})
+        self.plugin.register(on)
+        self.addCleanup(on.hooks["pre_llm_call"].__self__.close)
+        self.assertNotIn("evt_", on.sections["protocol-chaos.overview"][0]({}), "with related on, the matters come with the turn")
+
+    def test_a_message_that_names_a_matter_gets_its_details_once(self):
+        host, plugin = self.loaded(NewHermes(settings={"related": "on"}))
         result = plugin.pre_llm_call(session_id="s1", user_message="葡萄牙那趟要不要改成秋天？", conversation_history=[])
         context = result["context"]
         self.assertTrue(context.startswith(self.plugin.HEADER))
@@ -272,7 +293,7 @@ class PluginTest(unittest.TestCase):
         self.assertIsNone(plugin.pre_llm_call(session_id="s3", user_message="今天天气怎么样", conversation_history=[]))
 
     def test_the_server_never_receives_the_message(self):
-        host, plugin = self.loaded()
+        host, plugin = self.loaded(NewHermes(settings={"related": "on"}))
         sent = []
         original = self.plugin.Repository._post
 
@@ -400,7 +421,7 @@ class PluginTest(unittest.TestCase):
     # -- structure
 
     def test_recorded_words_are_folded_into_the_matters_structure(self):
-        host, plugin = self.loaded()
+        host, plugin = self.loaded(NewHermes(settings={"related": "on"}))
         matter = self.note("We want to repaint the study this autumn.", title="2026 年秋天书房刷墙")["eventId"]
         message = "书房刷墙预算定在三千以内，下周末先去买漆"
         seen = {}

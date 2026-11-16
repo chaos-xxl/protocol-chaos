@@ -18,10 +18,13 @@ server, and the repository never holds up a reply:
 
 - **Before the model answers.** When a session starts, a map of your open matters goes into
   the system prompt: one line each, parts under the matter they belong to, the ones that
-  changed most recently first, and where the latest stand; matters you set aside are counted,
-  not listed. On each message, the plugin compares the message with the matters' titles on
-  this machine; for the few it plainly names, it reads their goal, constraints, plan, progress
-  and latest words by id and adds them to the turn.
+  changed most recently first, and where the latest stand, each with its id; matters you set
+  aside are counted, not listed. The model opens the matters a message is about itself, by id,
+  through the `protocol_chaos` MCP server (below). With `related: on`, the plugin instead
+  compares each message with the matters' titles on this machine, and for the few it plainly
+  names, reads their goal, constraints, plan, progress and latest words by id and adds them to
+  the turn; it is off by default, because picking by shared words also picks matters a message
+  is not about.
 - **After the model answers.** In a background thread, Hermes's recording model decides
   whether your message changes one of your matters or starts one, and which. If so, the
   plugin records your words with `event_note`, copied from the message itself, so they are
@@ -57,8 +60,8 @@ long-lived matter.
 
 ## What leaves this machine
 
-- **To your Protocol Chaos server** (the URL you configure): requests for its directory, reads
-  of the matters this plugin picked, by id, and the words it records. Never the messages
+- **To your Protocol Chaos server** (the URL you configure): requests for its directory, the
+  words it records, and, with `related: on`, reads of the matters this plugin picked, by id. Never the messages
   themselves: deciding what is relevant happens here (see §10 of the
   [protocol](https://github.com/chaos-xxl/protocol-chaos/blob/main/PROTOCOL.md)).
 - **To the model provider Hermes already uses**, only for recording, through Hermes's own
@@ -107,7 +110,7 @@ Hermes asks for two values and keeps them with your other credentials:
 Restart Hermes (and the gateway, if one runs). The log then shows one line:
 
 ```text
-protocol-chaos 0.3.1: overview in system prompt, recording background, structure auto
+protocol-chaos 0.3.2: overview in system prompt, related matters off, recording background, structure auto
 ```
 
 `overview in first turn` on a Hermes without system prompt sections; `recording model` where
@@ -125,6 +128,7 @@ as a form):
 | `capture` | `auto` | `auto` records in the background after each answer; `model` asks the model to record; `off` records nothing. |
 | `structure` | `auto` | `auto` folds recorded words into their matter's fields right away; `off` leaves that to the organizer. Needs background recording. |
 | `overview` | `auto` | Where the overview goes: the system prompt (`auto`, `prompt`), the first turn's message (`turn`), or nowhere (`off`). |
+| `related` | `off` | `off`: the model reads the overview and opens the matters a message is about itself, through the `protocol_chaos` MCP server. `on`: before each answer, the plugin picks up to three matters from their titles and adds their details to the turn. |
 
 Recording and the structure update run as the auxiliary task `protocol_chaos_capture`, which
 follows the model configured for compression, a small and cheap one. Pin another under

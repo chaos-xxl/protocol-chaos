@@ -56,7 +56,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("protocol_chaos")
 
-PLUGIN_VERSION = "0.3.1"
+PLUGIN_VERSION = "0.3.2"
 URL_SECRET = "PROTOCOL_CHAOS_URL"
 TOKEN_SECRET = "PROTOCOL_CHAOS_TOKEN"
 READ_TIMEOUT = 6.0
@@ -472,13 +472,14 @@ def by_recent_activity(entries: list) -> list:
     return sorted(entries, key=lambda entry: (latest[entry["id"]], -position[entry["id"]]), reverse=True)
 
 
-def overview_text(entries: list, budget: int) -> str:
+def overview_text(entries: list, budget: int, ids: bool = False) -> str:
     """The open matters as a map. Every open matter gets one line (its title, and its state unless
     it is active), parts indented under the matter they belong to, the ones with the most recent
     change beneath them first. Then, while the budget allows, the most recently changed also say
     where they stand. Set-aside (dormant) matters are counted, not listed. When not every line
     fits, the most recently changed are kept, each with the matters it sits under, and the rest
-    are counted."""
+    are counted. With ids, every line carries its matter's id, so that the model can open one
+    itself with a single read (the related setting is off: the plugin adds no matters to a turn)."""
     shown = [entry for entry in entries if entry.get("state") in OPEN_STATES and entry.get("state") != SET_ASIDE]
     set_aside = len({entry["id"] for entry in entries if entry.get("state") == SET_ASIDE})
     head = [
@@ -486,6 +487,9 @@ def overview_text(entries: list, budget: int) -> str:
         "Open matters, most recent change first; indented ones are parts of the one above. "
         "The state is given unless it is active; the latest also say where they stand.",
     ]
+    if ids:
+        head.append("To read one in full (goal, constraint, plan, latest words), call event_get_protocol with its id; "
+                    "read only the ones the user's message is about.")
     tail = [f"- and {set_aside} set aside (dormant), not listed"] if set_aside else []
     if not shown:
         return "\n".join([*head, *(tail or ["- (none yet)"])])
@@ -497,6 +501,8 @@ def overview_text(entries: list, budget: int) -> str:
         line = "  " * depth + "- " + clip(entry.get("title") or "(untitled)", OVERVIEW_TITLE_CHARS)
         if entry.get("state") != "active":
             line += f" · {entry.get('state')}"
+        if ids:
+            line += f" [id:{entry['id']}]"
         line_of[entry["id"]] = line
     room = budget - len("\n".join([*head, *tail])) - 1
     newest = sorted(order, key=lambda key: str(entry_of[key].get("updatedAt") or ""), reverse=True)
@@ -953,6 +959,7 @@ def unchanged_since(patch: dict, base: dict, current: dict) -> dict:
 class ProtocolChaosPlugin:
     def __init__(self, settings: dict, llm: Any = None, capture_task: Optional[str] = None) -> None:
         self.settings = settings
+        self.related = settings.get("related", "off") == "on"
         self.actor = settings.get("actor") or "hermes"
         self.llm = llm if llm is not None and hasattr(llm, "complete_structured") else None
         self.capture_task = capture_task
@@ -1034,7 +1041,7 @@ class ProtocolChaosPlugin:
             if connection is None:
                 return ""
             note = self.recording_note()
-            overview = overview_text(connection.directory(max_age=0), PROMPT_SECTION_CHARS - len(note) - 2)
+            overview = overview_text(connection.directory(max_age=0), PROMPT_SECTION_CHARS - len(note) - 2, ids=not self.related)
             text = f"{overview}\n\n{note}"
             log.info("protocol-chaos: overview of %d characters in the system prompt", len(text))
             return text
@@ -1065,11 +1072,12 @@ class ProtocolChaosPlugin:
         overview_added = False
         if (not self.overview_in_prompt and self.settings.get("overview", "auto") in ("auto", "turn")
                 and not state["overview_done"] and not history_has(conversation_history, OVERVIEW_MARKER)):
-            parts.append(overview_text(entries, TURN_OVERVIEW_CHARS))
+            parts.append(overview_text(entries, TURN_OVERVIEW_CHARS, ids=not self.related))
             overview_added = True
         state["overview_done"] = True
         text = message_text(user_message)
-        if text.strip() and not text.lstrip().startswith("/"):
+        # Off by default: the model reads the overview and opens what the message is about itself.
+        if self.related and text.strip() and not text.lstrip().startswith("/"):
             exclude = set(state["shown"]) | shown_ids(conversation_history)
             matches = rank(text, entries, RELATED_MIN_SCORE, RELATED_MAX, exclude)
             if matches:
@@ -1271,6 +1279,7 @@ def register(ctx: Any) -> None:
         "capture": config_value(ctx, "capture", "auto", ("auto", "model", "off")),
         "structure": config_value(ctx, "structure", "auto", ("auto", "off")),
         "overview": config_value(ctx, "overview", "auto", ("auto", "prompt", "turn", "off")),
+        "related": config_value(ctx, "related", "off", ("on", "off")),
     }
     try:
         llm = getattr(ctx, "llm", None)
@@ -1315,7 +1324,7 @@ def register(ctx: Any) -> None:
     ctx.register_hook("pre_llm_call", plugin.pre_llm_call)
     ctx.register_hook("post_llm_call", plugin.post_llm_call)
     log.info(
-        "protocol-chaos %s: overview in %s, recording %s, structure %s",
-        PLUGIN_VERSION, "system prompt" if plugin.overview_in_prompt else "first turn", plugin.capture_mode,
-        plugin.structure_mode,
+        "protocol-chaos %s: overview in %s, related matters %s, recording %s, structure %s",
+        PLUGIN_VERSION, "system prompt" if plugin.overview_in_prompt else "first turn",
+        "on" if plugin.related else "off", plugin.capture_mode, plugin.structure_mode,
     )
