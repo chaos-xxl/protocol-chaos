@@ -1,15 +1,27 @@
 # Protocol Chaos for Hermes
 
-Your long-lived matters (a trip next spring, a renovation, a job search, a five-year goal) live
-on your own [Protocol Chaos](https://github.com/chaos-xxl/protocol-chaos) server, where every
-assistant you use can read and add to them. This plugin connects
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) to that server so that the
-repository never holds up a reply:
+Memory recalls what you said. Protocol Chaos keeps track of where things stand.
 
-- **Before the model answers.** When a session starts, an overview of your open matters goes
-  into the system prompt. On each message, the plugin compares the message with the matters'
-  titles on this machine; for the few it plainly names, it reads their goal, constraints,
-  plan, progress and latest words by id and adds them to the turn.
+Each of your long-lived matters (a trip next spring, a renovation, a job search, a five-year
+goal) has one record on your own [Protocol Chaos](https://github.com/chaos-xxl/protocol-chaos)
+server, built from your own words: where it stands, what it is for, its limits and plan, the
+larger matter it belongs to and its parts, and who said what, when. Hermes and your other
+assistants (Codex, Claude Code, Kiro, anything that can use an MCP server) share these records.
+Hermes reads them before it answers and updates them after, without a tool call, and a bundled
+organizer folds in once a day what every assistant recorded.
+
+It is not a memory provider and does not replace yours: it runs beside it. Your matters stay on
+your server, and the server never sees your messages, only the words recorded from them.
+
+This plugin connects [Hermes Agent](https://github.com/NousResearch/hermes-agent) to that
+server, and the repository never holds up a reply:
+
+- **Before the model answers.** When a session starts, a map of your open matters goes into
+  the system prompt: one line each, parts under the matter they belong to, the ones that
+  changed most recently first, and where the latest stand; matters you set aside are counted,
+  not listed. On each message, the plugin compares the message with the matters' titles on
+  this machine; for the few it plainly names, it reads their goal, constraints, plan, progress
+  and latest words by id and adds them to the turn.
 - **After the model answers.** In a background thread, Hermes's recording model decides
   whether your message changes one of your matters or starts one, and which. If so, the
   plugin records your words with `event_note`, copied from the message itself, so they are
@@ -17,9 +29,20 @@ repository never holds up a reply:
   progress, state and the people and places involved, grounded on the words just recorded and
   read with the last few messages of the conversation, so that "let's take the second option"
   is understood. The next turn, and every other assistant on your server, sees the change.
-- **Once a day.** A bundled skill, `protocol-chaos:organizer`, does the rest: it links parts
-  to the matters they belong to, merges duplicates, and keeps records of the people and
-  places you mention. Turn it on with `/blueprint protocol-chaos:organizer`.
+- **Once a day.** A bundled skill, `protocol-chaos:organizer`, reads what all your assistants
+  recorded that day and organizes it: it completes each matter's fields, links parts to the
+  matters they belong to, merges duplicates, and keeps records of the people and places you
+  mention. Turn it on with `/blueprint protocol-chaos:organizer`.
+
+**One week, measured.** The author used it for a week on draft 0.2, with four assistants
+sharing one server. 45 entries were recorded, 41 of them by assistants other than Hermes. Of
+the 45, 29 were the author's own words, 15 the assistants' notes on what they did, and 1 a copy
+the organizer made. Of the organizer's 54 changes, 46 rested on words another assistant had
+recorded; checked one by one, no wrong fact was found. In conversation, on the one afternoon
+it was used, Hermes recorded 3 entries and made 11 changes, 5 of which put the details of one
+breakdown on the long-lived matter above it; 0.3.0 records such an episode on a part of its
+own. Nothing was lost or edited across nine daily backups. One person, one week: an
+observation, not a benchmark.
 
 Everything fails open: if the server is unreachable or answers with an error, the turn goes on
 as it would without the plugin. The plugin logs ids, counts, times and token counts, never what
@@ -47,6 +70,12 @@ long-lived matter.
 - Nothing else. No telemetry, no other network calls, no files read outside the plugin's own
   directory. One short-lived background thread per message it considers recording: one model
   call to decide, and one more when it records.
+- **What Hermes keeps.** Hermes saves the context the plugin adds to a turn with that turn in
+  its session database and sends it again on later turns of the session, as it does with any
+  plugin's added context
+  ([hermes-agent#143739](https://github.com/NousResearch/hermes-agent/issues/143739)). The
+  details of the matters a turn named therefore stay in Hermes's session history, and its
+  background memory review reads them along with the rest of the conversation.
 
 ## Requirements
 
@@ -78,7 +107,7 @@ Hermes asks for two values and keeps them with your other credentials:
 Restart Hermes (and the gateway, if one runs). The log then shows one line:
 
 ```text
-protocol-chaos 0.3.0: overview in system prompt, recording background, structure auto
+protocol-chaos 0.3.1: overview in system prompt, recording background, structure auto
 ```
 
 `overview in first turn` on a Hermes without system prompt sections; `recording model` where

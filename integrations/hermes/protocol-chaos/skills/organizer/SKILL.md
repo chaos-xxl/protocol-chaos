@@ -1,7 +1,7 @@
 ---
 name: organizer
 description: Fold the words recorded in Protocol Chaos into structure (draft 0.2 servers)
-version: 0.3.0
+version: 0.3.1
 metadata:
   hermes:
     tags: [protocol-chaos, organizer, scheduled]
