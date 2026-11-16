@@ -20,18 +20,22 @@
 // matter in the background with one headless call to that agent's model (organize.mjs), and a
 // daily sweep at 04:00 folds what was missed; it calls no model when nothing was recorded.
 //
-// Agents: claude-code, codex, dsh (DeepSeek Harness). An agent that already has an MCP server
-// named protocol_chaos is left as it is. Where each agent keeps its settings follows its own
-// variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME.
+// Agents: claude-code, codex, dsh (DeepSeek Harness), hermes. Hermes reaches the server over
+// HTTP, so for it init also runs `launcher --http 127.0.0.1:<port>` at login, issues it a token,
+// writes both into Hermes's .env, adds the protocol_chaos MCP server and installs the plugin.
+// An agent that already has an MCP server named protocol_chaos is left as it is. Where each
+// agent keeps its settings follows its own variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME,
+// HERMES_HOME.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, userInfo } from 'node:os';
 import { basename, delimiter, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
+import { Clients } from './clients.mjs';
 import { instructions } from './instructions.mjs';
 import { ORGANIZER_ACTOR, ORGANIZER_FILE } from './organize.mjs';
 
@@ -47,7 +51,7 @@ const HELP = `Usage:
   protocol-chaos uninstall [--only <agents>] [--dry-run] [--data <directory>]
   protocol-chaos doctor [--data <directory>]
 
-Agents: claude-code, codex, dsh (DeepSeek Harness), comma-separated for --only.
+Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, comma-separated for --only.
 --yes      connect every agent found, without asking
 --organizer  the agent whose model organizes in the background: dsh, claude-code, codex, or none
              (default: the first connected of dsh, claude-code, codex)
@@ -144,17 +148,18 @@ function backup(ctx, file) {
   const target = join(ctx.data, 'backups', ctx.stamp, `${basename(dirname(file))}-${basename(file)}`);
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
   copyFileSync(file, target);
+  chmodSync(target, 0o600);
   return target;
 }
 
 /** Appends a marked block to a text file, creating it when missing; returns the change. */
-function addBlock(ctx, file, block) {
+function addBlock(ctx, file, block, mode = 0o644) {
   const existed = existsSync(file);
   const original = existed ? readFileSync(file, 'utf8') : '';
   const separator = original === '' ? '' : original.endsWith('\n') ? '\n' : '\n\n';
   const inserted = `${separator}${block}\n`;
   const saved = existed ? backup(ctx, file) : undefined;
-  writeAtomic(file, original + inserted, existed ? modeOf(file) : 0o644);
+  writeAtomic(file, original + inserted, existed ? modeOf(file) : mode);
   return { kind: 'block', file, inserted, created: !existed, backup: saved };
 }
 
@@ -410,7 +415,140 @@ const dsh = {
   },
 };
 
-export const AGENTS = [claudeCode, codex, dsh];
+const hermesHome = (ctx) => resolve(ctx.env.HERMES_HOME || join(ctx.home, '.hermes'));
+const HERMES_PLUGIN = 'chaos-xxl/protocol-chaos#integrations/hermes/protocol-chaos';
+const HTTP_LABEL = 'io.github.chaos-xxl.protocol-chaos.http';
+const HTTP_PORTS = [8721, 8722, 8723, 8724, 8725];
+
+/** One variable of a .env file, or undefined. */
+function envValue(file, key) {
+  if (!existsSync(file)) return undefined;
+  for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const match = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
+    if (match && match[1] === key) return match[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+  return undefined;
+}
+
+const loopback = (url) => /^https?:\/\/(127\.\d+\.\d+\.\d+|localhost|\[::1\])(:\d+)?\//.test(String(url));
+
+/** Whether nothing listens on this port on 127.0.0.1. */
+function portFree(port) {
+  const probe = spawnSync(process.execPath, ['-e', `const s=require('node:net').createServer();s.once('error',()=>process.exit(1));s.listen(${port},'127.0.0.1',()=>s.close(()=>process.exit(0)))`], { timeout: 5000 });
+  return probe.status === 0;
+}
+
+/**
+ * Starts `launcher --http 127.0.0.1:<port>` at login and keeps it running: a launchd agent on
+ * macOS, a systemd user service on Linux. Only for the real home folder, as with the sweep.
+ */
+function startHttpService(ctx, port) {
+  if (resolve(ctx.home) !== resolve(userInfo().homedir)) return { skipped: 'HOME is not your home folder' };
+  const args = [ctx.launcher, '--http', `127.0.0.1:${port}`];
+  if (process.platform === 'darwin') {
+    const plist = join(ctx.home, 'Library', 'LaunchAgents', `${HTTP_LABEL}.plist`);
+    const xml = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const text = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0"><dict>',
+      `  <key>Label</key><string>${HTTP_LABEL}</string>`,
+      `  <key>ProgramArguments</key><array>${args.map((arg) => `<string>${xml(arg)}</string>`).join('')}</array>`,
+      '  <key>RunAtLoad</key><true/>',
+      '  <key>KeepAlive</key><true/>',
+      `  <key>StandardErrorPath</key><string>${xml(join(ctx.data, 'server.log'))}</string>`,
+      '</dict></plist>',
+      '',
+    ].join('\n');
+    writeAtomic(plist, text, 0o644);
+    const domain = `gui/${userInfo().uid}`;
+    spawnSync('launchctl', ['bootout', domain, plist], { stdio: 'ignore' });
+    run(ctx, ['launchctl', 'bootstrap', domain, plist]);
+    return { kind: 'service', platform: 'launchd', files: [plist], undo: [['launchctl', 'bootout', domain, plist]] };
+  }
+  if (process.platform === 'linux' && which(ctx, 'systemctl')) {
+    const unit = join(ctx.home, '.config', 'systemd', 'user', 'protocol-chaos-http.service');
+    writeAtomic(unit, `[Unit]\nDescription=Protocol Chaos server for Hermes (written by protocol-chaos init)\n\n[Service]\nExecStart=${args.join(' ')}\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n`, 0o644);
+    run(ctx, ['systemctl', '--user', 'daemon-reload']);
+    run(ctx, ['systemctl', '--user', 'enable', '--now', 'protocol-chaos-http.service']);
+    return { kind: 'service', platform: 'systemd', files: [unit], undo: [['systemctl', '--user', 'disable', '--now', 'protocol-chaos-http.service']] };
+  }
+  return { skipped: 'no user service manager (launchd or systemd) here' };
+}
+
+const hermes = {
+  id: 'hermes',
+  name: 'Hermes',
+  find(ctx) {
+    const command = which(ctx, 'hermes');
+    if (command) return { found: true, where: command };
+    if (existsSync(hermesHome(ctx))) return { found: false, note: 'its folder is here, but the hermes command is not on PATH' };
+    return { found: false };
+  },
+  existing(ctx) {
+    const url = envValue(join(hermesHome(ctx), '.env'), 'PROTOCOL_CHAOS_URL');
+    if (!url) return undefined;
+    return { text: `the server at ${url}`, url: loopback(url) ? undefined : url };
+  },
+  plan(ctx) {
+    const command = which(ctx, 'hermes') ?? 'hermes';
+    const env = join(hermesHome(ctx), '.env');
+    const port = HTTP_PORTS.find(portFree);
+    if (!port) throw new InstallError(`Ports ${HTTP_PORTS.join(', ')} on 127.0.0.1 are all in use, so the server for Hermes has nowhere to listen.`);
+    const url = `http://127.0.0.1:${port}/mcp`;
+    let token;
+    return [
+      {
+        say: 'issue Hermes its own token (clients add hermes)',
+        apply: () => {
+          const clients = new Clients(ctx.data);
+          if (clients.list().some((client) => client.name === 'hermes')) clients.remove('hermes');
+          token = clients.add('hermes');
+          return { kind: 'client', name: 'hermes' };
+        },
+      },
+      {
+        say: `run the server for Hermes at ${url}, started at login`,
+        apply: () => {
+          const service = startHttpService(ctx, port);
+          if (service.kind) return service;
+          ctx.say(`  Hermes: the server was not set to start at login (${service.skipped}). Start it with: ${ctx.launcher} --http 127.0.0.1:${port}`);
+          return undefined;
+        },
+      },
+      {
+        say: `add PROTOCOL_CHAOS_URL and PROTOCOL_CHAOS_TOKEN to ${env}`,
+        apply: () => addBlock(ctx, env, [`# protocol-chaos:begin (${NOTE})`, `PROTOCOL_CHAOS_URL=${url}`, `PROTOCOL_CHAOS_TOKEN=${token}`, '# protocol-chaos:end'].join('\n'), 0o600),
+      },
+      {
+        // The model opens matters itself (the plugin's related setting is off), and the organizer
+        // skill uses the same server: both through an MCP server named protocol_chaos.
+        say: 'add the protocol_chaos MCP server to Hermes (hermes config set)',
+        apply: () => {
+          run(ctx, [command, 'config', 'set', 'mcp_servers.protocol_chaos.url', '${PROTOCOL_CHAOS_URL}']);
+          run(ctx, [command, 'config', 'set', 'mcp_servers.protocol_chaos.headers.Authorization', 'Bearer ${PROTOCOL_CHAOS_TOKEN}']);
+          return { kind: 'command', label: 'hermes config set mcp_servers.protocol_chaos', undo: [command, 'config', 'unset', 'mcp_servers.protocol_chaos'] };
+        },
+      },
+      {
+        say: `install the plugin (hermes plugins install ${HERMES_PLUGIN} --enable)`,
+        apply: () => {
+          // Hermes may ask its own questions about installing a plugin: they go to this terminal.
+          const result = spawnSync(command, ['plugins', 'install', HERMES_PLUGIN, '--enable'], { env: ctx.env, stdio: process.stdin.isTTY ? 'inherit' : 'pipe', encoding: 'utf8', timeout: 300_000 });
+          if (result.status !== 0) throw new InstallError(`hermes plugins install failed (exit ${result.status ?? result.error?.message}).${result.stderr ? ` ${String(result.stderr).trim().split('\n').slice(-3).join(' ')}` : ''}`);
+          return { kind: 'command', label: 'hermes plugins install protocol-chaos', undo: [command, 'plugins', 'remove', 'protocol-chaos'] };
+        },
+      },
+    ];
+  },
+  verify(ctx) {
+    const env = join(hermesHome(ctx), '.env');
+    if (!hasMarkedBlock(env)) return { ok: false, text: `no protocol-chaos block in ${env}` };
+    return { ok: true, text: `${env} points the plugin at ${envValue(env, 'PROTOCOL_CHAOS_URL')}`, url: envValue(env, 'PROTOCOL_CHAOS_URL'), token: envValue(env, 'PROTOCOL_CHAOS_TOKEN') };
+  },
+};
+
+export const AGENTS = [claudeCode, codex, dsh, hermes];
 
 // ---------------------------------------------------------------------- runtime and launcher
 
@@ -567,7 +705,8 @@ async function setupOrganizer(ctx, state, options) {
   }
   const pick = asked ?? choices[0];
   if (!pick) {
-    if (connected.length) ctx.say('Organizing in the background: no connected agent can run headless here, so recorded words are not folded into their matters.');
+    if (connected.includes('hermes')) ctx.say('Organizing: Hermes folds the words it records itself (its plugin), and none of the other agents can run headless here.');
+    else if (connected.length) ctx.say('Organizing in the background: no connected agent can run headless here, so recorded words are not folded into their matters.');
     return;
   }
   const name = AGENTS.find((agent) => agent.id === pick).name;
@@ -580,6 +719,8 @@ async function setupOrganizer(ctx, state, options) {
   }
   if (current?.agent) removeOrganizer(ctx, state);
   const config = { agent: pick, command: organizerCommand(ctx, pick), actor: ORGANIZER_ACTOR, enabled: true };
+  // Hermes's plugin folds the words it records itself; the daily sweep catches any it missed.
+  if (connected.includes('hermes')) config.selfOrganizing = ['hermes'];
   if (pick === 'claude-code') Object.assign(config, { model: 'haiku', budgetUsd: 0.2 });
   const text = `${JSON.stringify(config, null, 2)}\n`;
   writeAtomic(join(ctx.data, ORGANIZER_FILE), text, 0o600);
@@ -746,6 +887,13 @@ function undo(ctx, change) {
       return `could not undo ${change.label}: ${error.message}`;
     }
   }
+  if (change.kind === 'client') {
+    return new Clients(ctx.data).remove(change.name) ? `revoked the token of the client "${change.name}"` : `the client "${change.name}" is gone already`;
+  }
+  if (change.kind === 'service' || change.kind === 'schedule') {
+    unschedule(ctx, change);
+    return `stopped and removed ${change.files.map((file) => basename(file)).join(', ')}`;
+  }
   return `unknown change ${change.kind}; left as it is`;
 }
 
@@ -815,6 +963,10 @@ async function doctor(ctx) {
     }
     const result = agent.verify(ctx);
     report(result.ok, `${agent.name}: ${result.text}`);
+    if (result.ok && result.url) {
+      const answer = await probeHttp(result.url, result.token);
+      report(answer.ok, `${agent.name}: ${answer.text}`);
+    }
   }
   if (state.organizer?.agent) {
     const config = readJson(join(ctx.data, ORGANIZER_FILE));
@@ -832,6 +984,20 @@ async function doctor(ctx) {
   }
   ctx.say(problems ? `${problems} problem${problems === 1 ? '' : 's'}. Running \`npx protocol-chaos init\` again repairs the launcher and the runtime.` : 'Everything answers. Start a new session in an agent for it to see the server.');
   return problems ? 1 : 0;
+}
+
+/** Asks the HTTP server, as Hermes would, for its directory. */
+async function probeHttp(url, token) {
+  try {
+    const call = (body, auth) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...(auth ? { Authorization: `Bearer ${auth}` } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(5000) });
+    const refused = await call({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+    if (refused.status !== 401) return { ok: false, text: `${url} answered ${refused.status} without a token, not 401: is it this server?` };
+    const answer = await call({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'context_pack', arguments: {} } }, token);
+    if (!answer.ok) return { ok: false, text: `${url} refused Hermes's token (${answer.status})` };
+    return { ok: true, text: `the server at ${url} answers Hermes's token` };
+  } catch (error) {
+    return { ok: false, text: `nothing answers at ${url} (${error.cause?.code ?? error.name})` };
+  }
 }
 
 /** Starts the server through the launcher, as an agent would, and reads the directory. */

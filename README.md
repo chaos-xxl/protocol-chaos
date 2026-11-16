@@ -32,13 +32,13 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex and DeepSeek Harness on this computer and connects the ones you pick to one repository:
+You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex, DeepSeek Harness and Hermes on this computer and connects the ones you pick to one repository:
 
 ```sh
 npx protocol-chaos init
 ```
 
-Each agent gets an MCP server named `protocol_chaos` that writes under the agent's own name. The agents read the directory of your matters themselves and open the ones a message is about; nothing is added to a turn before the model answers. Every change is recorded, and every file edited is backed up first: `npx protocol-chaos uninstall` puts each file back as it was, and `npx protocol-chaos doctor` checks the connections. An agent that already has a `protocol_chaos` server is left as it is. One of them organizes in the background (DeepSeek Harness, then Claude Code, then Codex): after an assistant records your words, one call to that agent's model folds them into their matter, so every agent reads where it stands. What `init` writes for each agent is in [server/README.md](server/README.md#installer), and how organizing works in [Organizing in the background](server/README.md#organizing-in-the-background). For Hermes, use [its plugin](integrations/hermes/protocol-chaos/README.md).
+Each agent gets an MCP server named `protocol_chaos` that writes under the agent's own name. The agents read the directory of your matters themselves and open the ones a message is about; nothing is added to a turn before the model answers. Every change is recorded, and every file edited is backed up first: `npx protocol-chaos uninstall` puts each file back as it was, and `npx protocol-chaos doctor` checks the connections. An agent that already has a `protocol_chaos` server is left as it is. One of them organizes in the background (DeepSeek Harness, then Claude Code, then Codex): after an assistant records your words, one call to that agent's model folds them into their matter, so every agent reads where it stands. What `init` writes for each agent is in [server/README.md](server/README.md#installer), and how organizing works in [Organizing in the background](server/README.md#organizing-in-the-background). For Hermes it also installs [its plugin](integrations/hermes/protocol-chaos/README.md).
 
 To connect an assistant by hand instead, add the reference server under the name `protocol_chaos`:
 

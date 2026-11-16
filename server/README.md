@@ -49,7 +49,7 @@ Add `entities` to either, as in `writer,entities`, for an assistant that keeps f
 `init` connects the agents on one computer to one repository, `uninstall` takes that back, and `doctor` checks it. macOS and Linux.
 
 ```sh
-npx protocol-chaos init [--only claude-code,codex,dsh] [--organizer <agent>|none] [--no-schedule] [--yes] [--dry-run] [--data <directory>]
+npx protocol-chaos init [--only claude-code,codex,dsh,hermes] [--organizer <agent>|none] [--no-schedule] [--yes] [--dry-run] [--data <directory>]
 npx protocol-chaos uninstall [--only …] [--dry-run] [--data <directory>]
 npx protocol-chaos doctor [--data <directory>]
 ```
@@ -64,10 +64,11 @@ What `init` puts in place:
 | Claude Code (`claude-code`) | `claude mcp add --scope user`, which keeps it in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`) | Claude Code shows the server's instructions to its model. |
 | Codex (`codex`) | a `[mcp_servers.protocol_chaos]` table at the end of `config.toml` in `$CODEX_HOME` (default `~/.codex`) | Codex shows a server's instructions only as the description of its tools ([openai/codex#29097](https://github.com/openai/codex/issues/29097)), so `init` also writes them into `AGENTS.md` there, unless that file already mentions `protocol_chaos`. |
 | DeepSeek Harness (`dsh`) | one `@deepseek-ai/dsh-mcp-client` entry at the end of `cordis.patch.yml` in `$DSH_HOME` (default `~/.dsh`), the patch layer of every profile | DeepSeek Harness puts the server's instructions in its system prompt. |
+| Hermes (`hermes`) | the server over HTTP on `127.0.0.1` (port 8721, or the next free one up to 8725), started at login by launchd or a systemd user service; a token for the client `hermes`; `PROTOCOL_CHAOS_URL` and `PROTOCOL_CHAOS_TOKEN` at the end of `.env` in `$HERMES_HOME` (default `~/.hermes`); the `protocol_chaos` MCP server (`hermes config set`); and the plugin (`hermes plugins install … --enable`) | The plugin puts an overview of the open matters, with their ids, in the system prompt; the model opens matters through the MCP server. |
 
 Text `init` adds to a file sits between `protocol-chaos:begin` and `protocol-chaos:end`. Every change is recorded in `<data>/installed.json`, and every file is copied to `<data>/backups/` before it is edited. `uninstall` takes the changes back in reverse order: the files are as they were, byte for byte, unless you edited them in between, and a file `init` created is deleted. When no agent is left, it removes the launcher and the server too, and keeps the repository.
 
-An agent that already has a `protocol_chaos` server is left as it is. When that server is elsewhere (a URL), the agents `init` would connect now would get a separate repository on this computer, not that one: `init` says so and asks, and with `--yes` it does not connect them. Hermes reaches the server over HTTP: see [its plugin](../integrations/hermes/protocol-chaos/README.md).
+An agent that already has a `protocol_chaos` server (for Hermes, a `PROTOCOL_CHAOS_URL` in its `.env`) is left as it is. When that server is elsewhere (a URL), the agents `init` would connect now would get a separate repository on this computer, not that one: `init` says so and asks, and with `--yes` it does not connect them. Hermes folds the words it records itself, with its plugin, so the server does not queue them for the organizer.
 
 By hand, the entry for DeepSeek Harness, in `~/.dsh/cordis.patch.yml`, is:
 

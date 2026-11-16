@@ -3,8 +3,8 @@
 // second run changes nothing, that entries made by someone else are left alone, and that
 // uninstall puts every file back byte for byte.
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
@@ -224,4 +224,67 @@ test('--organizer picks another agent or turns organizing off, and the choice ho
   const gone = installer(home, 'uninstall', '--only', 'claude-code');
   assert.match(gone.out, /off, since its agent was disconnected|organizing in the background: off/);
   assert.ok(!existsSync(join(home, '.protocol-chaos', 'organizer.json')));
+});
+
+// A stand-in for the hermes command: logs how it was called.
+const FAKE_HERMES = `#!/usr/bin/env node
+require('node:fs').appendFileSync(require('node:path').join(process.env.HOME, 'hermes-calls.log'), process.argv.slice(2).join(' ') + '\\n');
+`;
+
+test('Hermes gets a token, the server over HTTP, its .env, an MCP server and the plugin; its own words are not queued', async () => {
+  const home = freshHome();
+  writeFileSync(join(home, 'bin', 'hermes'), FAKE_HERMES);
+  chmodSync(join(home, 'bin', 'hermes'), 0o755);
+  mkdirSync(join(home, '.hermes'));
+  const original = 'OPENAI_API_KEY=sk-test\n';
+  writeFileSync(join(home, '.hermes', '.env'), original, { mode: 0o600 });
+  const data = join(home, '.protocol-chaos');
+
+  const result = installer(home, 'init', '--yes', '--only', 'hermes,dsh');
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Connected: DeepSeek Harness, Hermes|Connected: Hermes, DeepSeek Harness/);
+  assert.match(result.out, /not set to start at login \(HOME is not your home folder\)/);
+  const env = read(join(home, '.hermes', '.env'));
+  assert.ok(env.startsWith(original));
+  const url = /PROTOCOL_CHAOS_URL=(http:\/\/127\.0\.0\.1:(\d+)\/mcp)/.exec(env);
+  const token = /PROTOCOL_CHAOS_TOKEN=(pc_[A-Za-z0-9_-]+)/.exec(env)?.[1];
+  assert.ok(url && token);
+  const { Clients } = await import('../clients.mjs');
+  assert.equal(new Clients(data).verify(token), 'hermes', 'the token in .env is the one issued');
+  const calls = read(join(home, 'hermes-calls.log'));
+  assert.ok(calls.includes('config set mcp_servers.protocol_chaos.url ${PROTOCOL_CHAOS_URL}'));
+  assert.ok(calls.includes('config set mcp_servers.protocol_chaos.headers.Authorization Bearer ${PROTOCOL_CHAOS_TOKEN}'));
+  assert.ok(calls.includes('plugins install chaos-xxl/protocol-chaos#integrations/hermes/protocol-chaos --enable'));
+  assert.deepEqual(JSON.parse(read(join(data, 'organizer.json'))).selfOrganizing, ['hermes'], 'Hermes folds its own words');
+
+  // The service would start the server at login; here the test starts it.
+  const server = spawn(process.execPath, [SERVER, '--data', data, '--http', `127.0.0.1:${url[2]}`], { stdio: 'ignore' });
+  try {
+    await new Promise((done) => setTimeout(done, 800));
+    const doctor = await new Promise((done) => {
+      const child = spawn(process.execPath, [SERVER, 'doctor', '--runtime', ROOT], { env: { HOME: home, PATH: [join(home, 'bin'), dirname(process.execPath), '/usr/bin', '/bin'].join(':') } });
+      let out = '';
+      child.stdout.on('data', (chunk) => { out += chunk; });
+      child.on('close', (code) => done({ code, out }));
+    });
+    assert.match(doctor.out, /ok {3}Hermes: the server at http:\/\/127\.0\.0\.1:\d+\/mcp answers Hermes's token/, doctor.out);
+    const note = await fetch(url[1], {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'event_note', arguments: { actor: { kind: 'agent', id: 'hermes' }, text: 'Hermes records this itself', title: 'Recorded by Hermes, 2026' } } }),
+    });
+    assert.equal(note.status, 200);
+    await new Promise((done) => setTimeout(done, 300));
+    const queue = join(data, 'organizer', 'queue');
+    assert.ok(!existsSync(queue) || readdirSync(queue).length === 0, 'Hermes\'s words are not queued for the organizer');
+  } finally {
+    server.kill();
+  }
+
+  const removed = installer(home, 'uninstall');
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(read(join(home, '.hermes', '.env')), original, '.env is as it was');
+  assert.equal(new Clients(data).verify(token), undefined, 'the token is revoked');
+  const after = read(join(home, 'hermes-calls.log'));
+  assert.ok(after.includes('plugins remove protocol-chaos') && after.includes('config unset mcp_servers.protocol_chaos'));
 });

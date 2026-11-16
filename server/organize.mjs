@@ -101,6 +101,7 @@ export function queueFold({ directory, eventId, accountId, client, entry }) {
     if (process.env.PROTOCOL_CHAOS_ORGANIZING === '1') return false;
     const config = readOrganizer(directory);
     if (!config || !eventId || !accountId || client === (config.actor ?? ORGANIZER_ACTOR)) return false;
+    if (Array.isArray(config.selfOrganizing) && config.selfOrganizing.includes(client)) return false;
     const { queue } = paths(directory);
     mkdirSync(queue, { recursive: true, mode: 0o700 });
     writeFileSync(join(queue, `${Date.now()}-${accountId}.json`), JSON.stringify({ eventId, accountId }), { mode: 0o600 });
