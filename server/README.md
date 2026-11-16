@@ -49,7 +49,7 @@ Add `entities` to either, as in `writer,entities`, for an assistant that keeps f
 `init` connects the agents on one computer to one repository, `uninstall` takes that back, and `doctor` checks it. macOS and Linux.
 
 ```sh
-npx protocol-chaos init [--only claude-code,codex,dsh] [--yes] [--dry-run] [--data <directory>]
+npx protocol-chaos init [--only claude-code,codex,dsh] [--organizer <agent>|none] [--no-schedule] [--yes] [--dry-run] [--data <directory>]
 npx protocol-chaos uninstall [--only …] [--dry-run] [--data <directory>]
 npx protocol-chaos doctor [--data <directory>]
 ```
@@ -81,6 +81,18 @@ By hand, the entry for DeepSeek Harness, in `~/.dsh/cordis.patch.yml`, is:
         command: npx
         args: ['-y', 'protocol-chaos@0.2', '--client', 'dsh']
 ```
+
+## Organizing in the background
+
+An assistant records the user's words with `event_note` and goes on; folding them into their matter's fields (goal, constraint, plan, progress, state, the people and places involved) happens after, away from the conversation, as the Hermes plugin does after each answer:
+
+1. The server that receives an `event_note` queues the words in `<data>/organizer/queue/` and starts a detached `protocol-chaos organize --pending`, so the call returns at once.
+2. Once the assistant has finished its turn (15 seconds after the last words queued), that process folds each recorded sentence into its matter with **one** call to the organizer's model: it is shown the matter as it stands, where it sits (the matter it is part of, its open parts), its last six words and the new ones, and answers with only what changes (the rules are `FOLD_INSTRUCTIONS` in `organize.mjs`). The change is written with `event_record_expression`, grounded on those words, as `{"kind": "agent", "id": "organizer"}`. When someone wrote the matter in between, it reads again once and keeps what they changed.
+3. A **daily sweep** at 04:00 (`organize --sweep`, from launchd on macOS or a systemd user timer on Linux) folds the words nobody folded: recorded while organizing was off, or whose fold failed. When the repository has not changed since the last sweep, it ends without calling a model.
+
+The organizer is one of the connected agents, run headless: **DeepSeek Harness** (`dsh --profile headless`, which uses `deepseek-flash` by default), then **Claude Code** (`claude -p`, with the `haiku` model, no tools, no MCP servers and a spending cap of 0.2 USD a call), then **Codex** (`codex exec`, read-only; not yet run by us). `init` picks the first connected one and says what it sends: the matter and its recent words go to that agent's model provider. `--organizer claude-code` picks another, `--organizer none` turns organizing off, and `--no-schedule` leaves out the daily sweep. The choice is in `<data>/organizer.json`.
+
+The organizer's runs cannot start the organizer again: its words are not queued, its agent runs without this repository's MCP server, and every process it starts carries `PROTOCOL_CHAOS_ORGANIZING=1`. `npx protocol-chaos organize --status` shows the organizer, the queue and the last runs; the log (`<data>/organizer/log.jsonl`) holds ids, outcomes, times and token counts, never words. A check of the rules with real models is in [eval/organize/](../eval/organize/README.md).
 
 ## Storage
 

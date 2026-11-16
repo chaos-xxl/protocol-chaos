@@ -15,6 +15,11 @@
 // answers. Every change is recorded in <data>/installed.json, and every file edited is copied
 // to <data>/backups first. uninstall undoes the changes and keeps the repository.
 //
+// Organizing: one connected agent is the organizer (DeepSeek Harness, then Claude Code, then
+// Codex, or --organizer). After an assistant records words, the server folds them into their
+// matter in the background with one headless call to that agent's model (organize.mjs), and a
+// daily sweep at 04:00 folds what was missed; it calls no model when nothing was recorded.
+//
 // Agents: claude-code, codex, dsh (DeepSeek Harness). An agent that already has an MCP server
 // named protocol_chaos is left as it is. Where each agent keeps its settings follows its own
 // variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME.
@@ -22,12 +27,13 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { basename, delimiter, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { instructions } from './instructions.mjs';
+import { ORGANIZER_ACTOR, ORGANIZER_FILE } from './organize.mjs';
 
 const { version } = createRequire(import.meta.url)('../package.json');
 const PACKAGE_ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -37,12 +43,15 @@ const SERVER_NAME = 'protocol_chaos';
 const TOOLS = 'writer';
 const NOTE = 'added by `npx protocol-chaos init`; `npx protocol-chaos uninstall` removes it';
 const HELP = `Usage:
-  protocol-chaos init [--only <agents>] [--yes] [--dry-run] [--data <directory>]
+  protocol-chaos init [--only <agents>] [--organizer <agent>|none] [--no-schedule] [--yes] [--dry-run] [--data <directory>]
   protocol-chaos uninstall [--only <agents>] [--dry-run] [--data <directory>]
   protocol-chaos doctor [--data <directory>]
 
 Agents: claude-code, codex, dsh (DeepSeek Harness), comma-separated for --only.
 --yes      connect every agent found, without asking
+--organizer  the agent whose model organizes in the background: dsh, claude-code, codex, or none
+             (default: the first connected of dsh, claude-code, codex)
+--no-schedule  no daily sweep at 04:00 (words are still organized after each note)
 --dry-run  show what would change and change nothing
 --data     where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
 `;
@@ -61,6 +70,8 @@ export async function runInstaller(command, argv, env = process.env) {
         'dry-run': { type: 'boolean' },
         data: { type: 'string' },
         runtime: { type: 'string' },
+        organizer: { type: 'string' },
+        'no-schedule': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
       strict: true,
@@ -469,6 +480,121 @@ function ensureLauncher(ctx, state, runtime) {
   return { entry: runtime.entry, dir: runtime.dir, node: process.execPath, launcherSha256: sha256(text), version };
 }
 
+// -------------------------------------------------------------------------------- organizer
+
+const ORGANIZER_ORDER = ['dsh', 'claude-code', 'codex'];
+const ORGANIZER_RUN = { dsh: 'dsh --profile headless', 'claude-code': 'claude -p', codex: 'codex exec' };
+const SWEEP_LABEL = 'io.github.chaos-xxl.protocol-chaos.sweep';
+
+function organizerCommand(ctx, id) {
+  if (id === 'dsh') return dshCommand(ctx);
+  if (id === 'claude-code') return which(ctx, 'claude');
+  if (id === 'codex') return which(ctx, 'codex');
+  return undefined;
+}
+
+/** Schedules the daily sweep where the platform has a user scheduler; returns the change, or undefined. */
+function scheduleSweep(ctx) {
+  // Only for the real home folder: a scheduler is per user, not per HOME variable.
+  if (resolve(ctx.home) !== resolve(userInfo().homedir)) return { skipped: 'HOME is not your home folder' };
+  if (process.platform === 'darwin') {
+    const plist = join(ctx.home, 'Library', 'LaunchAgents', `${SWEEP_LABEL}.plist`);
+    const xml = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const text = [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0"><dict>',
+      `  <key>Label</key><string>${SWEEP_LABEL}</string>`,
+      `  <key>ProgramArguments</key><array><string>${xml(ctx.launcher)}</string><string>organize</string><string>--sweep</string></array>`,
+      '  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>0</integer></dict>',
+      `  <key>StandardErrorPath</key><string>${xml(join(ctx.data, 'organizer', 'sweep.err'))}</string>`,
+      '</dict></plist>',
+      '',
+    ].join('\n');
+    writeAtomic(plist, text, 0o644);
+    const domain = `gui/${userInfo().uid}`;
+    spawnSync('launchctl', ['bootout', domain, plist], { stdio: 'ignore' });
+    run(ctx, ['launchctl', 'bootstrap', domain, plist]);
+    return { kind: 'schedule', platform: 'launchd', files: [plist], sha256: sha256(text), undo: [['launchctl', 'bootout', domain, plist]] };
+  }
+  if (process.platform === 'linux' && which(ctx, 'systemctl')) {
+    const folder = join(ctx.home, '.config', 'systemd', 'user');
+    const service = join(folder, 'protocol-chaos-sweep.service');
+    const timer = join(folder, 'protocol-chaos-sweep.timer');
+    writeAtomic(service, `[Unit]\nDescription=Protocol Chaos: fold the words nobody folded (written by protocol-chaos init)\n\n[Service]\nType=oneshot\nExecStart=${ctx.launcher} organize --sweep\n`, 0o644);
+    writeAtomic(timer, '[Unit]\nDescription=Protocol Chaos daily sweep\n\n[Timer]\nOnCalendar=*-*-* 04:00:00\nPersistent=true\n\n[Install]\nWantedBy=timers.target\n', 0o644);
+    run(ctx, ['systemctl', '--user', 'daemon-reload']);
+    run(ctx, ['systemctl', '--user', 'enable', '--now', 'protocol-chaos-sweep.timer']);
+    return { kind: 'schedule', platform: 'systemd', files: [service, timer], undo: [['systemctl', '--user', 'disable', '--now', 'protocol-chaos-sweep.timer']] };
+  }
+  return { skipped: 'no user scheduler (launchd or systemd) here' };
+}
+
+function unschedule(ctx, change) {
+  for (const argv of change.undo ?? []) spawnSync(argv[0], argv.slice(1), { stdio: 'ignore' });
+  for (const file of change.files ?? []) rmSync(file, { force: true });
+  if (change.platform === 'systemd') spawnSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore' });
+}
+
+function removeOrganizer(ctx, state) {
+  const record = state.organizer;
+  if (!record) return;
+  if (record.schedule) unschedule(ctx, record.schedule);
+  const file = join(ctx.data, ORGANIZER_FILE);
+  if (existsSync(file) && sha256(readFileSync(file, 'utf8')) === record.sha256) rmSync(file);
+  delete state.organizer;
+}
+
+/**
+ * Picks the organizer among the connected agents and writes organizer.json; schedules the
+ * daily sweep. Keeps the one already chosen unless --organizer names another.
+ */
+async function setupOrganizer(ctx, state, options) {
+  const connected = Object.keys(state.agents);
+  const asked = options.organizer;
+  if (asked === 'none') {
+    if (state.organizer) removeOrganizer(ctx, state);
+    state.organizer = { declined: true };
+    ctx.say('Organizing in the background: off.');
+    return;
+  }
+  const current = state.organizer;
+  if (!asked && current?.agent && connected.includes(current.agent) && existsSync(join(ctx.data, ORGANIZER_FILE))) return;
+  if (!asked && current?.declined) return;
+  const choices = ORGANIZER_ORDER.filter((id) => connected.includes(id) && organizerCommand(ctx, id));
+  if (asked && !choices.includes(asked)) {
+    throw new InstallError(`--organizer ${asked}: it is not connected here, or its command is not found. Choices: ${choices.join(', ') || 'none'}.`);
+  }
+  const pick = asked ?? choices[0];
+  if (!pick) {
+    if (connected.length) ctx.say('Organizing in the background: no connected agent can run headless here, so recorded words are not folded into their matters.');
+    return;
+  }
+  const name = AGENTS.find((agent) => agent.id === pick).name;
+  ctx.say(`Organizing in the background: ${name} (${ORGANIZER_RUN[pick]}). After an assistant records your words, one call to its model folds them`);
+  ctx.say('into their matter: it is sent that matter and its recent words. A daily sweep at 04:00 folds what was missed, calling no model when nothing was recorded.');
+  if (!asked && !options.yes && process.stdin.isTTY && !['', 'y', 'yes'].includes(await ask('Organize with it? [Y/n] '))) {
+    state.organizer = { declined: true };
+    ctx.say('Organizing in the background: off. `npx protocol-chaos init --organizer <agent>` turns it on.');
+    return;
+  }
+  if (current?.agent) removeOrganizer(ctx, state);
+  const config = { agent: pick, command: organizerCommand(ctx, pick), actor: ORGANIZER_ACTOR, enabled: true };
+  if (pick === 'claude-code') Object.assign(config, { model: 'haiku', budgetUsd: 0.2 });
+  const text = `${JSON.stringify(config, null, 2)}\n`;
+  writeAtomic(join(ctx.data, ORGANIZER_FILE), text, 0o600);
+  // Words recorded before now are not organized: the sweep starts from here.
+  const organizerState = join(ctx.data, 'organizer', 'state.json');
+  if (!existsSync(organizerState)) writeAtomic(organizerState, `${JSON.stringify({ sweepCheckpoint: new Date().toISOString(), done: {} }, null, 2)}\n`, 0o600);
+  const record = { agent: pick, sha256: sha256(text), at: new Date().toISOString() };
+  if (!options['no-schedule']) {
+    const schedule = scheduleSweep(ctx);
+    if (schedule.kind) record.schedule = schedule;
+    else ctx.say(`The daily sweep was not scheduled: ${schedule.skipped}. \`npx protocol-chaos organize --sweep\` runs it by hand.`);
+  }
+  state.organizer = record;
+}
+
 // ------------------------------------------------------------------------------------- init
 
 async function init(ctx, options) {
@@ -494,13 +620,14 @@ async function init(ctx, options) {
   ctx.say('');
   const candidates = rows.filter((row) => row.found.found && !row.ours && !row.existing).map((row) => row.agent);
   const refresh = rows.some((row) => row.ours) && (state.runtime?.version !== version || state.runtime?.entry !== runtimePlan(ctx, options).entry);
-  if (!candidates.length && !refresh) {
+  const organizerWanted = Object.keys(state.agents).length > 0 && (options.organizer !== undefined || (!state.organizer?.agent && !state.organizer?.declined));
+  if (!candidates.length && !refresh && !organizerWanted) {
     ctx.say(rows.some((row) => row.ours) ? 'Nothing to do. `npx protocol-chaos doctor` checks the connections.' : 'No agent to connect.');
     return 0;
   }
   const remote = rows.find((row) => row.existing?.url);
   const chosen = candidates.length ? await choose(ctx, candidates, options) : [];
-  if (candidates.length && !chosen.length && !refresh) {
+  if (candidates.length && !chosen.length && !refresh && !organizerWanted) {
     ctx.say('Nothing was changed.');
     return 0;
   }
@@ -515,6 +642,9 @@ async function init(ctx, options) {
     if (runtime.install) ctx.say(`  copy the server (protocol-chaos ${version}) into ${runtime.dir}`);
     ctx.say(`  write the launcher ${ctx.launcher}`);
     for (const { agent, steps } of plans) for (const step of steps) ctx.say(`  ${agent.name}: ${step.say}`);
+    const connectedIds = [...Object.keys(state.agents), ...chosen.map((agent) => agent.id)];
+    const organizer = options.organizer ?? ORGANIZER_ORDER.find((id) => connectedIds.includes(id) && organizerCommand(ctx, id));
+    if (organizer && organizer !== 'none') ctx.say(`  organize in the background with ${organizer}, and schedule a daily sweep at 04:00${options['no-schedule'] ? ' (not with --no-schedule)' : ''}`);
     return 0;
   }
   mkdirSync(ctx.data, { recursive: true, mode: 0o700 });
@@ -542,6 +672,17 @@ async function init(ctx, options) {
     writeState(ctx, state);
   }
   ctx.say('');
+  if (Object.keys(state.agents).length) {
+    try {
+      await setupOrganizer(ctx, state, options);
+    } catch (error) {
+      if (!(error instanceof InstallError)) throw error;
+      failed += 1;
+      ctx.say(error.message);
+    }
+    writeState(ctx, state);
+    ctx.say('');
+  }
   const connected = Object.values(state.agents).map((agent) => agent.name);
   if (connected.length) {
     ctx.say(`Connected: ${connected.join(', ')}. The repository: ${join(ctx.data, 'repository.json')}.`);
@@ -624,7 +765,15 @@ function uninstall(ctx, options) {
     if (!ctx.dryRun) delete state.agents[id];
   }
   if (ctx.dryRun) return 0;
+  if (state.organizer?.agent && !state.agents[state.organizer.agent]) {
+    removeOrganizer(ctx, state);
+    ctx.say(Object.keys(state.agents).length
+      ? 'Organizing in the background: off, since its agent was disconnected. `npx protocol-chaos init --organizer <agent>` picks another.'
+      : '  organizing in the background: off');
+  }
   if (!Object.keys(state.agents).length) {
+    if (state.organizer) removeOrganizer(ctx, state);
+    rmSync(join(ctx.data, 'organizer'), { recursive: true, force: true });
     if (existsSync(ctx.launcher) && state.runtime?.launcherSha256 === sha256(readFileSync(ctx.launcher, 'utf8'))) rmSync(ctx.launcher);
     if (existsSync(dirname(ctx.launcher)) && !readdirSync(dirname(ctx.launcher)).length) rmSync(dirname(ctx.launcher), { recursive: true });
     if (state.runtime?.dir && existsSync(state.runtime.dir)) rmSync(state.runtime.dir, { recursive: true, force: true });
@@ -666,6 +815,20 @@ async function doctor(ctx) {
     }
     const result = agent.verify(ctx);
     report(result.ok, `${agent.name}: ${result.text}`);
+  }
+  if (state.organizer?.agent) {
+    const config = readJson(join(ctx.data, ORGANIZER_FILE));
+    let runnable = false;
+    try {
+      accessSync(config?.command ?? '', constants.X_OK);
+      runnable = true;
+    } catch {
+      // reported below
+    }
+    report(Boolean(config) && runnable, `organizer: ${state.organizer.agent} (${config?.command ?? 'no organizer.json'})${state.organizer.schedule ? ', daily sweep scheduled' : ''}`);
+    const lines = existsSync(join(ctx.data, 'organizer', 'log.jsonl')) ? readFileSync(join(ctx.data, 'organizer', 'log.jsonl'), 'utf8').trim().split('\n') : [];
+    const last = lines.length ? JSON.parse(lines[lines.length - 1]) : undefined;
+    if (last) ctx.say(`       last run ${last.at}: ${last.run} ${last.outcome}${last.error ? `: ${last.error}` : ''}`);
   }
   ctx.say(problems ? `${problems} problem${problems === 1 ? '' : 's'}. Running \`npx protocol-chaos init\` again repairs the launcher and the runtime.` : 'Everything answers. Start a new session in an agent for it to see the server.');
   return problems ? 1 : 0;

@@ -35,7 +35,7 @@ flowchart LR
 npx protocol-chaos init
 ```
 
-每个 Agent 都会多一个名为 `protocol_chaos` 的 MCP 服务端，用它自己的名字写入。Agent 自己读事情目录、打开这句话说的那几件；模型回答前，不往这一轮里加任何东西。每处改动都有记录，改文件之前先备份：`npx protocol-chaos uninstall` 把每个文件原样改回去，`npx protocol-chaos doctor` 检查连接。已经有 `protocol_chaos` 服务端的 Agent 不动。给每个 Agent 写了什么，见 [server/README.md](../server/README.md#installer)。Hermes 用[它的插件](../integrations/hermes/protocol-chaos/README.md)。
+每个 Agent 都会多一个名为 `protocol_chaos` 的 MCP 服务端，用它自己的名字写入。Agent 自己读事情目录、打开这句话说的那几件；模型回答前，不往这一轮里加任何东西。每处改动都有记录，改文件之前先备份：`npx protocol-chaos uninstall` 把每个文件原样改回去，`npx protocol-chaos doctor` 检查连接。已经有 `protocol_chaos` 服务端的 Agent 不动。其中一个 Agent 在后台负责整理（按 DeepSeek Harness、Claude Code、Codex 的顺序选）：某个助手记下你的话以后，用这个 Agent 的模型调一次，把话整理进那件事，所以每个 Agent 都能看到它现在到哪了。给每个 Agent 写了什么见 [server/README.md](../server/README.md#installer)，整理怎么做见[后台整理](../server/README.md#organizing-in-the-background)。Hermes 用[它的插件](../integrations/hermes/protocol-chaos/README.md)。
 
 想手动接，就把参考服务端加到助手里，名字用 `protocol_chaos`：
 

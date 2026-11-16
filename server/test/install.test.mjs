@@ -47,6 +47,9 @@ function freshHome() {
   mkdirSync(bin);
   writeFileSync(join(bin, 'claude'), FAKE_CLAUDE);
   chmodSync(join(bin, 'claude'), 0o755);
+  // DeepSeek Harness's command, found on PATH before any app on this machine; init never runs it.
+  writeFileSync(join(bin, 'dsh'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(bin, 'dsh'), 0o755);
   mkdirSync(join(home, '.codex'));
   mkdirSync(join(home, '.dsh'));
   return home;
@@ -103,9 +106,15 @@ test('init connects Claude Code, Codex and DeepSeek Harness, and uninstall puts 
   assert.ok(patch.includes(`command: '${launcher}'`));
   assert.ok(patch.includes("args: ['--client', 'dsh', '--tools', 'writer']"));
 
+  const organizer = JSON.parse(read(join(home, '.protocol-chaos', 'organizer.json')));
+  assert.deepEqual(organizer, { agent: 'dsh', command: join(home, 'bin', 'dsh'), actor: 'organizer', enabled: true }, 'DeepSeek Harness organizes first');
+  assert.match(first.out, /Organizing in the background: DeepSeek Harness \(dsh --profile headless\)/);
+  assert.match(first.out, /The daily sweep was not scheduled: HOME is not your home folder/, 'a test home never reaches the real scheduler');
+
   const doctor = installer(home, 'doctor');
   assert.equal(doctor.code, 0, doctor.out);
   assert.match(doctor.out, /the server answers through the launcher; 0 open matters/);
+  assert.match(doctor.out, /ok {3}organizer: dsh/);
 
   const again = installer(home, 'init', '--yes');
   assert.equal(again.code, 0, again.out);
@@ -119,6 +128,7 @@ test('init connects Claude Code, Codex and DeepSeek Harness, and uninstall puts 
   assert.ok(!existsSync(join(home, '.dsh', 'cordis.patch.yml')), 'the patch file init created is gone');
   assert.deepEqual(JSON.parse(read(join(home, '.claude.json'))).mcpServers, {});
   assert.ok(!existsSync(launcher) && !existsSync(join(home, '.protocol-chaos', 'installed.json')));
+  assert.ok(!existsSync(join(home, '.protocol-chaos', 'organizer.json')) && !existsSync(join(home, '.protocol-chaos', 'organizer')), 'organizing goes too');
   assert.match(read(join(home, 'claude-calls.log')), /^mcp add --scope user protocol_chaos -- .*\nmcp remove --scope user protocol_chaos\n$/);
 });
 
@@ -190,4 +200,28 @@ test('the agent guide\'s template is the text the server sends', () => {
   const guide = read(join(ROOT, 'docs', 'agent-guide.md'));
   const template = /## Server instructions[\s\S]*?```text\n([\s\S]*?)\n```/.exec(guide)[1];
   assert.equal(template, instructions());
+});
+
+test('--organizer picks another agent or turns organizing off, and the choice holds on the next run', () => {
+  const home = freshHome();
+  assert.equal(installer(home, 'init', '--yes', '--only', 'claude-code,dsh', '--organizer', 'claude-code').code, 0);
+  const config = JSON.parse(read(join(home, '.protocol-chaos', 'organizer.json')));
+  assert.equal(config.agent, 'claude-code');
+  assert.equal(config.model, 'haiku', 'a small model, with a spending cap per call');
+  assert.equal(config.budgetUsd, 0.2);
+  const off = installer(home, 'init', '--yes', '--organizer', 'none');
+  assert.equal(off.code, 0, off.out);
+  assert.match(off.out, /Organizing in the background: off/);
+  assert.ok(!existsSync(join(home, '.protocol-chaos', 'organizer.json')));
+  const again = installer(home, 'init', '--yes');
+  assert.match(again.out, /Nothing to do/, 'once turned off, it stays off');
+  const refused = installer(home, 'init', '--yes', '--organizer', 'codex');
+  assert.equal(refused.code, 1, refused.out);
+  assert.match(refused.out, /--organizer codex: it is not connected here/);
+  const removed = installer(home, 'uninstall', '--only', 'dsh');
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(installer(home, 'init', '--yes', '--organizer', 'claude-code').code, 0);
+  const gone = installer(home, 'uninstall', '--only', 'claude-code');
+  assert.match(gone.out, /off, since its agent was disconnected|organizing in the background: off/);
+  assert.ok(!existsSync(join(home, '.protocol-chaos', 'organizer.json')));
 });

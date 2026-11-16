@@ -9,6 +9,7 @@
 //   protocol-chaos clients add <name> [--tools <groups>] | tools <name> <groups>|default
 //                  | list | remove <name> [--data <directory>]
 //   protocol-chaos init | uninstall | doctor   connect the agents on this machine (install.mjs)
+//   protocol-chaos organize --pending | --sweep | --status   organizing in the background (organize.mjs)
 //
 // --data         where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
 // --client       over stdio, the name of the assistant on the other end, such as codex: the
@@ -31,21 +32,30 @@
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { CLIENT_NAME, Clients } from './clients.mjs';
 import { isLoopback, parseListen, PATH, serveHttp } from './http.mjs';
 import { instructions } from './instructions.mjs';
+import { queueFold } from './organize.mjs';
 import { Store } from './store.mjs';
 import { ACCOUNT_SOURCES, ACTOR_KINDS, ProtocolError, STATES } from './validate.mjs';
 
 const args = process.argv.slice(2);
 const VALUED = ['--data', '--http', '--tls-cert', '--tls-key', '--tools', '--client'];
-// The installer has flags of its own; it parses its arguments itself.
-if (['init', 'uninstall', 'doctor'].includes(args[0])) {
+// The installer and the organizer have flags of their own and parse their arguments themselves.
+// The command is the first word that is not a flag's value: the launcher puts --data first.
+const commandAt = args.findIndex((arg, index) => !arg.startsWith('-') && !VALUED.includes(args[index - 1]));
+const rest = commandAt < 0 ? [] : [...args.slice(0, commandAt), ...args.slice(commandAt + 1)];
+if (['init', 'uninstall', 'doctor'].includes(args[commandAt])) {
   const { runInstaller } = await import('./install.mjs');
-  process.exit(await runInstaller(args[0], args.slice(1)));
+  process.exit(await runInstaller(args[commandAt], rest));
+}
+if (args[commandAt] === 'organize') {
+  const { runOrganize } = await import('./organize.mjs');
+  process.exit(await runOrganize(rest));
 }
 const option = (name) => {
   const index = args.indexOf(name);
@@ -525,6 +535,7 @@ function checkClient(tool, input, client, remote) {
 }
 
 const { version } = createRequire(import.meta.url)('../package.json');
+const SERVER_ENTRY = fileURLToPath(import.meta.url);
 
 /** One MCP server: for stdio, the only one; over HTTP, one per request, bound to its client. */
 function createServer({ client, remote = true } = {}) {
@@ -555,6 +566,8 @@ function createServer({ client, remote = true } = {}) {
         ? { code: error.code, message: error.message }
         : { code: 'INTERNAL_ERROR', message: 'The server failed unexpectedly; nothing was changed. Retry, and report it if it persists.' };
     }
+    // Recorded words are folded into their matter in the background, when init chose an organizer.
+    if (!isError && tool.name === 'event_note') queueFold({ directory, eventId: body.eventId, accountId: body.accountId, client, entry: SERVER_ENTRY });
     const result = { content: [{ type: 'text', text: JSON.stringify(body) }] };
     if (isError) result.isError = true;
     return result;
