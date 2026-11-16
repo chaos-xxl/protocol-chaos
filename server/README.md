@@ -8,12 +8,14 @@ It was written from the specification alone, by an agent that had never seen ano
 npx -y protocol-chaos@0.2 [--data <directory>] [--tools <groups>] [--owner-tools]    # MCP over stdio, one computer
 npx -y protocol-chaos@0.2 --http 127.0.0.1:8721 [--data <directory>] [--tools <groups>]  # MCP over HTTP, several computers
 npx -y protocol-chaos@0.2 clients add <name> [--tools <groups>] | tools <name> <groups> | list | remove <name>  # the tokens for HTTP
+npx -y protocol-chaos@0.2 init | uninstall | doctor                                   # connect the agents on this computer
 node server/index.mjs …                                                              # the same, from a clone
 ```
 
 | Option | |
 |---|---|
 | `--data` | Where the repository lives. Default: `$PROTOCOL_CHAOS_DATA`, then `~/.protocol-chaos`. |
+| `--client <name>` | Over stdio, the name of the assistant on the other end, such as `codex`. The instructions tell it to write as `{"kind": "agent", "id": "<name>"}`, and writes as anyone else are refused (`ACTOR_MISMATCH`), as over HTTP. Without it, any actor is accepted. |
 | `--tools` | Which [tool groups](#tool-groups) a connection is offered. Default: `all`. |
 | `--owner-tools` | Also offer `repository_export` and `repository_import`. An export holds everything, so these are off unless the owner asks (PROTOCOL.md §8.6, §10). Over HTTP, every client could then export the whole repository. |
 | `--http [host:]port` | Serve MCP streamable HTTP at `/mcp` instead of stdio: the Remote level (§9.2). The host defaults to `127.0.0.1`. |
@@ -41,6 +43,44 @@ Every connection sends the definitions of the tools it is offered to its model, 
 | `all` | every group | an organizer, the conformance tests; the default |
 
 Add `entities` to either, as in `writer,entities`, for an assistant that keeps facts about people and places: those four tools are as long as all the others together. Over HTTP each client can have its own list, set when it is added (`clients add phone --tools assistant`) or later (`clients tools phone writer`, or `default` for the server's); it takes effect without a restart. A tool a connection is not offered cannot be called on it. The levels the server implements (PROTOCOL.md §12) are those of everything it offers with `all`.
+
+## Installer
+
+`init` connects the agents on one computer to one repository, `uninstall` takes that back, and `doctor` checks it. macOS and Linux.
+
+```sh
+npx protocol-chaos init [--only claude-code,codex,dsh] [--yes] [--dry-run] [--data <directory>]
+npx protocol-chaos uninstall [--only …] [--dry-run] [--data <directory>]
+npx protocol-chaos doctor [--data <directory>]
+```
+
+What `init` puts in place:
+
+- **The server**, copied with the dependencies it runs with into `<data>/runtime/<version>` (the files `npx` just fetched, so nothing is downloaded twice), and a **launcher**, `<data>/bin/protocol-chaos`, that starts it with the full path of the Node.js that ran `init`. Apps started from the desktop do not see your shell's `PATH`; the launcher does not need it. Running a newer `init` moves the launcher to the newer server and removes the older one.
+- **For each agent, an MCP server named `protocol_chaos`** that runs the launcher with `--client <agent> --tools writer`: the agent writes under its own name, and is offered the five tools of the `writer` profile.
+
+| Agent | What `init` writes | How its model gets the instructions |
+|---|---|---|
+| Claude Code (`claude-code`) | `claude mcp add --scope user`, which keeps it in `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`) | Claude Code shows the server's instructions to its model. |
+| Codex (`codex`) | a `[mcp_servers.protocol_chaos]` table at the end of `config.toml` in `$CODEX_HOME` (default `~/.codex`) | Codex shows a server's instructions only as the description of its tools ([openai/codex#29097](https://github.com/openai/codex/issues/29097)), so `init` also writes them into `AGENTS.md` there, unless that file already mentions `protocol_chaos`. |
+| DeepSeek Harness (`dsh`) | one `@deepseek-ai/dsh-mcp-client` entry at the end of `cordis.patch.yml` in `$DSH_HOME` (default `~/.dsh`), the patch layer of every profile | DeepSeek Harness puts the server's instructions in its system prompt. |
+
+Text `init` adds to a file sits between `protocol-chaos:begin` and `protocol-chaos:end`. Every change is recorded in `<data>/installed.json`, and every file is copied to `<data>/backups/` before it is edited. `uninstall` takes the changes back in reverse order: the files are as they were, byte for byte, unless you edited them in between, and a file `init` created is deleted. When no agent is left, it removes the launcher and the server too, and keeps the repository.
+
+An agent that already has a `protocol_chaos` server is left as it is. When that server is elsewhere (a URL), the agents `init` would connect now would get a separate repository on this computer, not that one: `init` says so and asks, and with `--yes` it does not connect them. Hermes reaches the server over HTTP: see [its plugin](../integrations/hermes/protocol-chaos/README.md).
+
+By hand, the entry for DeepSeek Harness, in `~/.dsh/cordis.patch.yml`, is:
+
+```yaml
+- insert:
+    - id: protocol-chaos-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: protocol_chaos
+        transport: stdio
+        command: npx
+        args: ['-y', 'protocol-chaos@0.2', '--client', 'dsh']
+```
 
 ## Storage
 

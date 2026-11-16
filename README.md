@@ -32,7 +32,15 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 20 or later and an assistant that can use MCP servers. Add the reference server under the name `protocol_chaos`:
+You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex and DeepSeek Harness on this computer and connects the ones you pick to one repository:
+
+```sh
+npx protocol-chaos init
+```
+
+Each agent gets an MCP server named `protocol_chaos` that writes under the agent's own name. The agents read the directory of your matters themselves and open the ones a message is about; nothing is added to a turn before the model answers. Every change is recorded, and every file edited is backed up first: `npx protocol-chaos uninstall` puts each file back as it was, and `npx protocol-chaos doctor` checks the connections. An agent that already has a `protocol_chaos` server is left as it is. What it writes for each agent is in [server/README.md](server/README.md#installer). For Hermes, use [its plugin](integrations/hermes/protocol-chaos/README.md).
+
+To connect an assistant by hand instead, add the reference server under the name `protocol_chaos`:
 
 - **Claude Code:**
 

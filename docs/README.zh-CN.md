@@ -29,7 +29,15 @@ flowchart LR
 
 ## 快速开始
 
-需要 Node.js 20 或更高版本，以及一个能用 MCP 服务端的助手。把参考服务端加到助手里，名字用 `protocol_chaos`：
+需要 Node.js 20 或更高版本，macOS 或 Linux。一条命令找出这台电脑上的 Claude Code、Codex 和 DeepSeek Harness，把你选的接到同一个库上：
+
+```sh
+npx protocol-chaos init
+```
+
+每个 Agent 都会多一个名为 `protocol_chaos` 的 MCP 服务端，用它自己的名字写入。Agent 自己读事情目录、打开这句话说的那几件；模型回答前，不往这一轮里加任何东西。每处改动都有记录，改文件之前先备份：`npx protocol-chaos uninstall` 把每个文件原样改回去，`npx protocol-chaos doctor` 检查连接。已经有 `protocol_chaos` 服务端的 Agent 不动。给每个 Agent 写了什么，见 [server/README.md](../server/README.md#installer)。Hermes 用[它的插件](../integrations/hermes/protocol-chaos/README.md)。
+
+想手动接，就把参考服务端加到助手里，名字用 `protocol_chaos`：
 
 - **Claude Code：**
 

@@ -2,13 +2,18 @@
 // The Protocol Chaos reference server: draft 0.2, levels Core, Entities, Search, Sync, Undo
 // and Remote, keeping the repository in one JSON file (store.mjs).
 //
-//   protocol-chaos [--data <directory>] [--tools <groups>] [--owner-tools]        MCP over stdio (§9.1)
+//   protocol-chaos [--data <directory>] [--client <name>] [--tools <groups>] [--owner-tools]
+//                                                                              MCP over stdio (§9.1)
 //   protocol-chaos --http [<host>:]<port> [--tls-cert <file> --tls-key <file>]
 //                  [--data <directory>] [--tools <groups>] [--owner-tools]        MCP over HTTP (§9.2)
 //   protocol-chaos clients add <name> [--tools <groups>] | tools <name> <groups>|default
 //                  | list | remove <name> [--data <directory>]
+//   protocol-chaos init | uninstall | doctor   connect the agents on this machine (install.mjs)
 //
 // --data         where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
+// --client       over stdio, the name of the assistant on the other end, such as codex: the
+//                instructions tell it to write as {"kind": "agent", "id": <name>}, and writes
+//                as anyone else are refused, as over HTTP. Without it, any actor is accepted.
 // --tools        which tool groups a connection is offered, so that an assistant's model is
 //                not handed definitions it never uses: a comma-separated list of groups
 //                (read, record, fields, links, history, sync, entities, owner) and profiles
@@ -29,13 +34,19 @@ import { join, resolve } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
-import { Clients } from './clients.mjs';
+import { CLIENT_NAME, Clients } from './clients.mjs';
 import { isLoopback, parseListen, PATH, serveHttp } from './http.mjs';
+import { instructions } from './instructions.mjs';
 import { Store } from './store.mjs';
 import { ACCOUNT_SOURCES, ACTOR_KINDS, ProtocolError, STATES } from './validate.mjs';
 
 const args = process.argv.slice(2);
-const VALUED = ['--data', '--http', '--tls-cert', '--tls-key', '--tools'];
+const VALUED = ['--data', '--http', '--tls-cert', '--tls-key', '--tools', '--client'];
+// The installer has flags of its own; it parses its arguments itself.
+if (['init', 'uninstall', 'doctor'].includes(args[0])) {
+  const { runInstaller } = await import('./install.mjs');
+  process.exit(await runInstaller(args[0], args.slice(1)));
+}
 const option = (name) => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -84,7 +95,10 @@ try {
 }
 
 if (positional[0] === 'clients') clientsCommand(positional.slice(1));
-if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: clients add <name> | tools <name> <groups> | list | remove <name>.`);
+if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: init | uninstall | doctor | clients add <name> | tools <name> <groups> | list | remove <name>.`);
+const stdioClient = option('--client');
+if (stdioClient !== undefined && option('--http')) usage('--client is for stdio. Over HTTP every token names its client (clients add <name>).');
+if (stdioClient !== undefined && !CLIENT_NAME.test(stdioClient)) usage(`--client takes a name of lowercase letters, digits, ".", "_" and "-", such as codex; got "${stdioClient}"`);
 
 /** `protocol-chaos clients …`: manages the tokens of the Remote level, then exits. */
 function clientsCommand([action, name, ...rest]) {
@@ -129,19 +143,7 @@ const VERBATIM = "text is the user's own words, unchanged (the part about this E
 
 const VERBATIM_ENTITY = "text and accountText are the user's own words, unchanged (the part about this Entity); Statements are your one-fact reading of them, and an inference carries its basis.";
 
-// The template from docs/agent-guide.md, under 2,000 characters because some clients cut
-// longer instructions. The rules it leaves out are in the tool descriptions. Over HTTP the
-// client's name is known, so the instructions say which actor to write as.
-const instructions = (client) => [
-  "This server holds the user's Events: the long-lived matters they tell their assistants about (trips, plans, purchases, ambitions), and the people and places involved. It outlives conversations, assistants and machines. It exists to organise what the user said, not to make Events complete.",
-  'READ ON YOUR SIDE. Answer from what the conversation holds. When the answer depends on the user\'s own matters, use the directory (context_pack) to decide which Events matter, and read only those by id. Never send unrelated messages.',
-  'RECORD AFTER. After answering, record only words that change an Event (its title, state, progress, goal, constraint, plan, refs or parents) or start one: an intention, plan, commitment, purchase, trip, target or arrangement that outlasts the conversation. One event_note with the user\'s words and the most specific Event\'s id; for a new Event, a title that names it on its own and parentEventId when it belongs under one. Never questions, hypotheticals, requests for work, fragments such as a meal or a workout, or your own calculations; but do record a feeling, news or progress said along with them.',
-  "VERBATIM. Account text is the user's actual sentence, never a summary. Mark your inferences with their basis; the user's words win.",
-  client
-    ? `YOUR NAME. This connection is the client "${client}": write as {"kind": "agent", "id": "${client}"}, never as the user or another assistant.`
-    : 'YOUR NAME. Write as yourself (actor), never as the user or another assistant.',
-  "DON'T ASK TO TIDY. Do not ask the user to fill in details or approve the organisation; ask only before an irreversible or outward action.",
-].join('\n\n');
+// The MCP instructions (instructions.mjs) name the client when its name is known.
 
 // ---- input schemas (documentation; the server validates every input itself) ----
 // Kept short: every connection sends these definitions to its model with every request.
@@ -509,13 +511,15 @@ function groupsOf(client) {
 const VERSIONED = new Set(['event_record_expression', 'event_add_parent', 'event_remove_parent', 'entity_record']);
 const wellFormed = (actor) => actor !== null && typeof actor === 'object' && ACTOR_KINDS.includes(actor.kind)
   && typeof actor.id === 'string' && actor.id.trim() !== '';
-function checkRemote(tool, input, client) {
+// A stdio connection started with --client is bound to that name the same way, without the
+// version rule: it runs on the machine that holds the repository.
+function checkClient(tool, input, client, remote) {
   if (tool.annotations.readOnlyHint) return;
   // A malformed actor is left to validation (VALIDATION_ERROR); a well-formed one must be the client.
   if (wellFormed(input.actor) && (input.actor.kind !== 'agent' || input.actor.id !== client)) {
-    throw new ProtocolError('ACTOR_MISMATCH', `This connection is authenticated as the client "${client}": write as {"kind": "agent", "id": "${client}"}. Nothing was changed.`);
+    throw new ProtocolError('ACTOR_MISMATCH', `This connection is ${remote ? 'authenticated as' : 'started for'} the client "${client}": write as {"kind": "agent", "id": "${client}"}. Nothing was changed.`);
   }
-  if (VERSIONED.has(tool.name) && (input.expectedVersion === undefined || input.expectedVersion === null)) {
+  if (remote && VERSIONED.has(tool.name) && (input.expectedVersion === undefined || input.expectedVersion === null)) {
     throw new ProtocolError('VERSION_REQUIRED', `Over a remote connection, ${tool.name} needs expectedVersion: the version from your last read or receipt. Nothing was changed.`);
   }
 }
@@ -523,8 +527,8 @@ function checkRemote(tool, input, client) {
 const { version } = createRequire(import.meta.url)('../package.json');
 
 /** One MCP server: for stdio, the only one; over HTTP, one per request, bound to its client. */
-function createServer({ client } = {}) {
-  const { tools: offered, byName } = offeringFor(groupsOf(client));
+function createServer({ client, remote = true } = {}) {
+  const { tools: offered, byName } = offeringFor(groupsOf(remote ? client : undefined));
   const server = new Server(
     { name: 'protocol-chaos-reference', version },
     { capabilities: { tools: {} }, instructions: instructions(client) },
@@ -541,7 +545,7 @@ function createServer({ client } = {}) {
     let body;
     let isError = false;
     try {
-      if (client) checkRemote(tool, input, client);
+      if (client) checkClient(tool, input, client, remote);
       body = tool.annotations.readOnlyHint
         ? store.read((repo) => tool.run(repo, input))
         : await store.write((repo) => tool.run(repo, input));
@@ -594,5 +598,5 @@ if (option('--http')) {
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
 } else {
-  await createServer().connect(new StdioServerTransport());
+  await createServer({ client: stdioClient, remote: false }).connect(new StdioServerTransport());
 }

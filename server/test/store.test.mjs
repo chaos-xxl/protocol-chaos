@@ -117,3 +117,21 @@ test('export and import are offered only with --owner-tools', async () => {
     await owner.close();
   }
 });
+
+test('--client names the assistant over stdio and refuses writes as anyone else', async () => {
+  const data = freshDirectory();
+  const server = await start(data, '--client', 'codex');
+  try {
+    const instructions = server.client.getInstructions() ?? '';
+    assert.match(instructions, /write as \{"kind": "agent", "id": "codex"\}/);
+    assert.ok(instructions.length < 2000, `instructions are ${instructions.length} characters`);
+    await assert.rejects(note(server, 'Words written under another name'), (error) => error.code === 'ACTOR_MISMATCH');
+    const receipt = await server.call('event_note', { actor: { kind: 'agent', id: 'codex' }, accountSource: 'user', text: 'I want to repaint the hallway', title: 'Repaint the hallway, 2026' });
+    // Over stdio the version rule of remote connections does not apply.
+    await server.call('event_record_expression', { eventId: receipt.eventId, actor: { kind: 'agent', id: 'codex' }, accountSource: 'user', text: 'Grey this time', set: { facts: { plan: 'Grey walls.' } } });
+    const { accounts } = await server.call('event_get_protocol', { eventId: receipt.eventId });
+    assert.deepEqual(accounts.map((account) => account.recordedBy?.id ?? account.actor?.id), ['codex', 'codex']);
+  } finally {
+    await server.close();
+  }
+});
