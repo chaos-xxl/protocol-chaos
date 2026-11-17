@@ -4,12 +4,12 @@
 // uninstall puts every file back byte for byte.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { instructions } from '../instructions.mjs';
+import { IMPORT_STATIC, instructions } from '../instructions.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const SERVER = join(ROOT, 'server', 'index.mjs');
@@ -40,11 +40,17 @@ if (args[0] === 'mcp' && args[1] === 'add') {
 writeFileSync(file, JSON.stringify(config, null, 2));
 `;
 
+// The only commands a test home has: its own bin folder, with node in it, and the system's.
+// Node's own folder is left out of PATH: it often holds the commands of agents installed on
+// the machine (kiro, cursor), which a test must not find.
+const pathOf = (home) => [join(home, 'bin'), '/usr/bin', '/bin'].join(':');
+
 function freshHome() {
   const home = mkdtempSync(join(tmpdir(), 'protocol-chaos-init-'));
   homes.push(home);
   const bin = join(home, 'bin');
   mkdirSync(bin);
+  symlinkSync(process.execPath, join(bin, 'node'));
   writeFileSync(join(bin, 'claude'), FAKE_CLAUDE);
   chmodSync(join(bin, 'claude'), 0o755);
   // DeepSeek Harness's command, found on PATH before any app on this machine; init never runs it.
@@ -61,7 +67,7 @@ function installer(home, ...args) {
 }
 
 function installerAs(home, args) {
-  const env = { HOME: home, PATH: [join(home, 'bin'), dirname(process.execPath), '/usr/bin', '/bin'].join(':') };
+  const env = { HOME: home, PATH: pathOf(home) };
   const result = spawnSync(process.execPath, [SERVER, ...args], { env, encoding: 'utf8', input: '' });
   return { code: result.status, out: result.stdout + result.stderr };
 }
@@ -99,7 +105,7 @@ test('init connects Claude Code, Codex and DeepSeek Harness, and uninstall puts 
   }
   const rules = read(join(home, '.codex', 'AGENTS.md'));
   assert.ok(rules.startsWith(`${CODEX_RULES}\n\n<!-- protocol-chaos:begin`), 'the block follows the user\'s rules after a blank line');
-  assert.ok(rules.includes(instructions('codex')), 'Codex gets the server\'s own instructions, naming it');
+  assert.ok(rules.includes(`${instructions('codex')}\n\n${IMPORT_STATIC}`), 'Codex gets the server\'s own instructions, naming it, and the import line');
 
   const patch = read(join(home, '.dsh', 'cordis.patch.yml'));
   assert.match(patch, /serverName: protocol_chaos/);
@@ -263,7 +269,7 @@ test('Hermes gets a token, the server over HTTP, its .env, an MCP server and the
   try {
     await new Promise((done) => setTimeout(done, 800));
     const doctor = await new Promise((done) => {
-      const child = spawn(process.execPath, [SERVER, 'doctor', '--runtime', ROOT], { env: { HOME: home, PATH: [join(home, 'bin'), dirname(process.execPath), '/usr/bin', '/bin'].join(':') } });
+      const child = spawn(process.execPath, [SERVER, 'doctor', '--runtime', ROOT], { env: { HOME: home, PATH: pathOf(home) } });
       let out = '';
       child.stdout.on('data', (chunk) => { out += chunk; });
       child.on('close', (code) => done({ code, out }));
@@ -306,4 +312,109 @@ test('a second run repairs a launcher whose Node.js is gone', () => {
   assert.ok(read(launcher).includes(process.execPath) && !read(launcher).includes('/gone/node'));
   assert.equal(installer(home, 'doctor').code, 0);
   assert.match(installer(home, 'init', '--yes').out, /Nothing to do/, 'once repaired, nothing more to do');
+});
+
+const KIRO_SETTINGS = '{\n    "mcpServers": {\n        "figma": {\n            "url": "http://127.0.0.1:3845/mcp"\n        }\n    },\n    "powers": {}\n}\n';
+const CURSOR_SETTINGS = '{\n  "mcpServers": {\n    "figma-mcp": {\n      "command": "npx",\n      "args": ["figma-mcp"]\n    }\n  }\n}';
+
+test('Kiro gets an entry in its mcp.json and a steering file, Cursor an entry and a skill; uninstall puts both back byte for byte', () => {
+  const home = freshHome();
+  mkdirSync(join(home, '.kiro', 'settings'), { recursive: true });
+  writeFileSync(join(home, '.kiro', 'settings', 'mcp.json'), KIRO_SETTINGS);
+  mkdirSync(join(home, '.cursor'));
+  writeFileSync(join(home, '.cursor', 'mcp.json'), CURSOR_SETTINGS, { mode: 0o600 });
+  const launcher = join(home, '.protocol-chaos', 'bin', 'protocol-chaos');
+
+  const first = installer(home, 'init', '--yes', '--only', 'kiro,cursor');
+  assert.equal(first.code, 0, first.out);
+  assert.match(first.out, /Connected: Kiro, Cursor/);
+
+  const kiro = JSON.parse(read(join(home, '.kiro', 'settings', 'mcp.json')));
+  assert.deepEqual(kiro.mcpServers.protocol_chaos, { command: launcher, args: ['--client', 'kiro', '--tools', 'writer'] });
+  assert.deepEqual(kiro.mcpServers.figma, { url: 'http://127.0.0.1:3845/mcp' }, 'the other servers are kept');
+  assert.deepEqual(kiro.powers, {}, 'and the other settings');
+  assert.match(read(join(home, '.kiro', 'settings', 'mcp.json')), /^ {4}"mcpServers"/m, 'with the file\'s own indentation');
+  const steering = read(join(home, '.kiro', 'steering', 'protocol-chaos.md'));
+  assert.ok(!steering.startsWith('---'), 'no front matter: Kiro includes it in every conversation');
+  assert.ok(steering.includes(`${instructions('kiro')}\n\n${IMPORT_STATIC}`));
+
+  const cursor = JSON.parse(read(join(home, '.cursor', 'mcp.json')));
+  assert.deepEqual(cursor.mcpServers.protocol_chaos, { command: launcher, args: ['--client', 'cursor', '--tools', 'writer'] });
+  assert.equal(statSync(join(home, '.cursor', 'mcp.json')).mode & 0o777, 0o600, 'the file keeps its mode');
+  const skill = read(join(home, '.cursor', 'skills', 'protocol-chaos', 'SKILL.md'));
+  const front = /^---\nname: protocol-chaos\ndescription: (".*")\n---\n/.exec(skill);
+  assert.ok(front, 'a skill: name and description in front matter');
+  const description = JSON.parse(front[1]);
+  assert.ok(description.length <= 1024 && description.includes('context_pack') && description.includes('event_note'), 'the description carries the main rule, within 1,024 characters');
+  assert.ok(skill.includes(`${instructions('cursor')}\n\n${IMPORT_STATIC}`));
+
+  const doctor = installer(home, 'doctor');
+  assert.equal(doctor.code, 0, doctor.out);
+  assert.match(doctor.out, /ok {3}Kiro: protocol_chaos runs the launcher/);
+  assert.match(doctor.out, /ok {3}Cursor: protocol_chaos runs the launcher/);
+  assert.match(first.out, /none of the connected agents can run headless here, so each assistant brings a matter's fields up to date itself/, 'neither organizes in the background');
+  assert.match(installer(home, 'init', '--yes', '--only', 'kiro,cursor').out, /Nothing to do/);
+
+  const removed = installer(home, 'uninstall');
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(read(join(home, '.kiro', 'settings', 'mcp.json')), KIRO_SETTINGS);
+  assert.equal(read(join(home, '.cursor', 'mcp.json')), CURSOR_SETTINGS);
+  assert.equal(statSync(join(home, '.cursor', 'mcp.json')).mode & 0o777, 0o600);
+  assert.ok(!existsSync(join(home, '.kiro', 'steering')), 'the steering folder init made is gone');
+  assert.ok(!existsSync(join(home, '.cursor', 'skills')), 'and the skills folder');
+});
+
+test('Kiro and Cursor: settings edited since are kept, an entry elsewhere is left alone, and files init cannot read are refused', () => {
+  const home = freshHome();
+  mkdirSync(join(home, '.kiro', 'steering'), { recursive: true });
+  writeFileSync(join(home, '.kiro', 'steering', 'my-rules.md'), 'Use the protocol_chaos server for my plans.\n');
+  mkdirSync(join(home, '.cursor'));
+  assert.equal(installer(home, 'init', '--yes', '--only', 'kiro,cursor').code, 0);
+  assert.ok(!existsSync(join(home, '.kiro', 'steering', 'protocol-chaos.md')), 'a steering file mentions the server already: none is added');
+  const settings = join(home, '.cursor', 'mcp.json');
+  const edited = JSON.parse(read(settings));
+  edited.mcpServers.other = { command: 'other' };
+  writeFileSync(settings, JSON.stringify(edited));
+  const removed = installer(home, 'uninstall');
+  assert.equal(removed.code, 0, removed.out);
+  assert.deepEqual(JSON.parse(read(settings)), { mcpServers: { other: { command: 'other' } } }, 'only the entry init added goes');
+  assert.ok(!existsSync(join(home, '.kiro', 'settings', 'mcp.json')), 'the settings file init created, unchanged since, goes');
+
+  const remote = '{"mcpServers": {"protocol_chaos": {"url": "https://example.org/mcp", "headers": {}}}}';
+  mkdirSync(join(home, '.kiro', 'settings'));
+  writeFileSync(join(home, '.kiro', 'settings', 'mcp.json'), remote);
+  writeFileSync(settings, '{\n  // my servers\n  "mcpServers": {}\n}\n');
+  const refused = installer(home, 'init', '--yes', '--only', 'kiro,cursor');
+  assert.equal(refused.code, 1, refused.out);
+  assert.match(refused.out, /Kiro\s+already connected to the server at https:\/\/example\.org\/mcp; left as it is/);
+  assert.equal(read(join(home, '.kiro', 'settings', 'mcp.json')), remote);
+  assert.match(refused.out, /would not share it/, 'connecting Cursor to a second repository needs a choice');
+
+  writeFileSync(join(home, '.kiro', 'settings', 'mcp.json'), '{"mcpServers": {}}');
+  const unreadable = installer(home, 'init', '--yes', '--only', 'cursor');
+  assert.equal(unreadable.code, 1, unreadable.out);
+  assert.match(unreadable.out, /is not plain JSON \(it may hold comments\)/);
+  assert.equal(read(settings), '{\n  // my servers\n  "mcpServers": {}\n}\n');
+});
+
+test('init shows what an import of other assistants\' memories would read and cost; with --yes it leaves the offer to the assistants', () => {
+  const home = freshHome();
+  mkdirSync(join(home, '.hermes', 'memories'), { recursive: true });
+  writeFileSync(join(home, '.hermes', 'memories', 'MEMORY.md'), 'Planning a week in Portugal with friends next spring.\n§\nLearning to sail this summer.');
+  const dry = installer(home, 'init', '--dry-run', '--only', 'codex');
+  assert.match(dry.out, /offer to import the memories of other assistants found here \(1 file\)/);
+  assert.ok(!existsSync(join(home, '.protocol-chaos')), 'a dry run plans without writing');
+
+  const result = installer(home, 'init', '--yes', '--only', 'codex');
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Memories other assistants keep on this machine:\n {2}Hermes +1 file, \d+ characters/);
+  assert.match(result.out, /Importing them: 1 part, about [\d,]+ tokens/);
+  assert.match(result.out, /the next assistant you talk to offers it, and asks you first/);
+  const state = JSON.parse(read(join(home, '.protocol-chaos', 'import', 'state.json')));
+  assert.equal(state.status, 'pending');
+  assert.match(installer(home, 'init', '--yes').out, /^(?![\s\S]*Memories other assistants)/, 'offered once: a second run does not show it again');
+
+  const declined = installer(home, 'init', '--yes', '--no-import', '--only', 'codex');
+  assert.equal(declined.code, 0, declined.out);
+  assert.equal(JSON.parse(read(join(home, '.protocol-chaos', 'import', 'state.json'))).status, 'declined', '--no-import takes back a pending offer');
 });

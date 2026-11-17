@@ -60,10 +60,18 @@ YOUR NAME. Write as yourself (actor), never as the user or another assistant.
 DON'T ASK TO TIDY. Do not ask the user to fill in details or approve the organisation; ask only before an irreversible or outward action.
 ```
 
+The reference server adds one paragraph while memories that other assistants keep on the computer wait to be imported, are being imported, or wait to be reported (its README, "Importing other assistants' memories"). While one waits to be offered:
+
+```text
+IMPORT. Memories that other assistants keep on this machine can be imported into this repository. Once per conversation, in your first reply: call memories_import with action status and, besides answering, tell the user what it returns (what would be read, the estimated tokens and time, where the text goes) and ask whether to import. Start or decline only on their answer.
+```
+
+Where a client does not show the instructions and they are written down instead (an `AGENTS.md`, a steering file, a skill), the paragraph cannot change with the import, so one fixed line follows them: call `memories_import` with action `status` in the first reply whenever the server offers it. The server offers the tool only while there is an import to offer, follow or report, so the line does nothing the rest of the time.
+
 ## Clients
 
 - **Name the server `protocol_chaos`** in the client's MCP configuration, so that tool names read the same in every client and in any instructions written for them.
-- **Install standing instructions** where the client keeps them: `AGENTS.md` for Codex, a steering file for Kiro, `CLAUDE.md` for Claude Code, a rules file elsewhere. Clients that show neither instructions nor tool descriptions to the model need them most.
+- **Install standing instructions** where the client keeps them: `AGENTS.md` for Codex, a steering file with no front matter for Kiro, a skill for Cursor (its description is what the model always sees), `CLAUDE.md` for Claude Code, a rules file elsewhere. Clients that show neither instructions nor tool descriptions to the model need them most.
 - **Offer each client only the tools it uses.** Every tool definition offered is sent to the model with every request. An assistant that records words and leaves the rest to an organizer needs `read` and `record`; one that also brings fields up to date needs `fields`; the organizer needs everything. The reference server does this with `--tools` and, per client, `clients tools` (see its README).
 - **Avoid prompt hooks that send every prompt to the server.** They conflict with §10 of the protocol. A hook that runs on the client and decides there what to read is fine.
 - **For several computers,** run one server that every client reaches over the network, with its own credential for each client (PROTOCOL.md §9.2).

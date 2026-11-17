@@ -29,13 +29,15 @@ flowchart LR
 
 ## 快速开始
 
-需要 Node.js 20 或更高版本，macOS 或 Linux。一条命令找出这台电脑上的 Claude Code、Codex、DeepSeek Harness 和 Hermes，把你选的接到同一个库上：
+需要 Node.js 20 或更高版本，macOS 或 Linux。一条命令找出这台电脑上的 Claude Code、Codex、DeepSeek Harness、Hermes、Kiro 和 Cursor，把你选的接到同一个库上：
 
 ```sh
 npx protocol-chaos init
 ```
 
 每个 Agent 都会多一个名为 `protocol_chaos` 的 MCP 服务端，用它自己的名字写入。Agent 自己读事情目录、打开这句话说的那几件；模型回答前，不往这一轮里加任何东西。每处改动都有记录，改文件之前先备份：`npx protocol-chaos uninstall` 把每个文件原样改回去，`npx protocol-chaos doctor` 检查连接。已经有 `protocol_chaos` 服务端的 Agent 不动。其中一个 Agent 在后台负责整理（按 DeepSeek Harness、Claude Code、Codex 的顺序选）：某个助手记下你的话以后，用这个 Agent 的模型调一次，把话整理进那件事，所以每个 Agent 都能看到它现在到哪了。给每个 Agent 写了什么见 [server/README.md](../server/README.md#installer)，整理怎么做见[后台整理](../server/README.md#organizing-in-the-background)。接 Hermes 时还会装上[它的插件](../integrations/hermes/protocol-chaos/README.md)。
+
+为了让新库不是空的，`init` 还会提出导入这台电脑上各个助手已有的记忆（Claude Code 的 `CLAUDE.md` 和记忆文件夹、Codex 的 `AGENTS.md`、Hermes 的 `MEMORY.md`、Kiro 的 steering 文件等）。它先列出会读哪些文件、跳过哪些、大约花多少 token 和时间、文字会发到哪里，你同意了才导入；没有终端可问时，由你下一次对话的助手来问。这些文件只读不改。导入用整理角色的模型在后台跑（没有能在后台跑的 Agent 时，在对话里由你的助手来做），做完后任何一个助手都会把整理出的事情按树给你看。详见[导入其他助手的记忆](../server/README.md#importing-other-assistants-memories)。
 
 想手动接，就把参考服务端加到助手里，名字用 `protocol_chaos`：
 
@@ -114,7 +116,7 @@ npx protocol-chaos init
 ## 你的数据
 
 - 库属于它的用户，随时可以导出、搬到另一个服务端（§8.6）。
-- 参考服务端把库存在它所在电脑上的一个文件里，不发往任何地方。用 HTTP 运行时，它只应答持有你发的令牌的助手。
+- 参考服务端把库存在它所在电脑上的一个文件里。混沌协议没有自己的服务器，参考服务端也不往任何这类服务器发东西。会离开这台电脑的只有两样，都是发给你接上的某个 Agent 的模型、经由那个 Agent 的服务商：`init` 设了整理角色时，正在整理的那件事和它最近的原话；你同意导入时，导入读到的记忆文件的文字（密钥、令牌和长串数字会先遮掉）。用 HTTP 运行时，它只应答持有你发的令牌的助手。
 - 目前每个接入的助手都能读到整个库，按客户端分别授权还没设计（§13）。只接入你愿意把全部内容交给它的助手。助手读到的内容会进入它的模型上下文，由它的服务商处理。
 - 助手被要求永远不记录密码、令牌和证件号码（§7）。
 
@@ -125,6 +127,7 @@ npx protocol-chaos init
 接下来：
 
 - [Hermes 插件](../integrations/hermes/protocol-chaos/README.md)在日常用过一段时间后，提交到 Hermes 的插件目录。
+- `init` 接更多的 Agent，每次几家，先从 OpenCode、OpenClaw、Claude Desktop、GitHub Copilot 和 Pi 开始。欢迎为其他 Agent 提 PR：每个 Agent 就是 [server/install.mjs](../server/install.mjs) 里的一个对象。
 - 按客户端分别授权：每个助手能读到什么（§13）。
 - 跨应用认出同一个人（§13）。
 - draft 0.3，从大家反馈的案例出发。

@@ -23,6 +23,9 @@ import { Store } from './store.mjs';
 
 export const ORGANIZER_FILE = 'organizer.json';
 export const ORGANIZER_ACTOR = 'organizer';
+// Who writes an import of other assistants' memories (memories.mjs). It sets the fields of the
+// matters it starts itself, so the sweep does not fold its words again.
+export const IMPORT_ACTOR = 'importer';
 const FACT_KEYS = ['goal', 'constraint', 'plan'];
 const STATES = ['emerging', 'active', 'waiting', 'dormant', 'done', 'cancelled'];
 const OPEN_STATES = ['emerging', 'active', 'waiting', 'dormant'];
@@ -131,7 +134,7 @@ const pidAlive = (pid) => {
 };
 
 /** One organizer at a time, per repository. A lock of a dead process, or an old one, is taken over. */
-function takeLock(file) {
+export function takeLock(file, staleMs = LOCK_STALE_MS) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const fd = openSync(file, 'wx', 0o600);
@@ -141,14 +144,24 @@ function takeLock(file) {
     } catch (error) {
       if (error.code !== 'EEXIST') throw error;
       const [pid, at] = String(readFileSync(file, 'utf8')).split(' ').map(Number);
-      if (pidAlive(pid) && Date.now() - at < LOCK_STALE_MS) return false;
+      if (pidAlive(pid) && Date.now() - at < staleMs) return false;
       rmSync(file, { force: true });
     }
   }
   return false;
 }
 
-const releaseLock = (file) => rmSync(file, { force: true });
+export const releaseLock = (file) => rmSync(file, { force: true });
+
+/** Whether a lock file names a process that is still running. */
+export function lockHeld(file) {
+  try {
+    const [pid] = String(readFileSync(file, 'utf8')).split(' ').map(Number);
+    return Number.isInteger(pid) && pid > 0 && pidAlive(pid);
+  } catch {
+    return false;
+  }
+}
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 // --------------------------------------------------------------------------------- the fold
@@ -414,7 +427,8 @@ function invocation(directory, config, instructions, input) {
     };
   }
   if (config.agent === 'codex') {
-    const last = join(paths(directory).home, 'codex-answer.txt');
+    // One file per run: an import and a fold may run at the same time.
+    const last = join(paths(directory).home, `codex-answer-${process.pid}-${Date.now()}.txt`);
     rmSync(last, { force: true });
     return {
       command,
@@ -422,7 +436,13 @@ function invocation(directory, config, instructions, input) {
         '-c', 'mcp_servers.protocol_chaos.enabled=false',
         ...(config.model ? ['--model', config.model] : []), '-'],
       input: `${instructions}\n\n----\n\n${input}`,
-      read: () => ({ text: readFileSync(last, 'utf8') }),
+      read: () => {
+        try {
+          return { text: readFileSync(last, 'utf8') };
+        } finally {
+          rmSync(last, { force: true });
+        }
+      },
     };
   }
   throw new Error(`unknown organizer agent "${config.agent}"`);
@@ -574,7 +594,7 @@ export async function runSweep(directory, { ask = askModel } = {}) {
       const batch = store.read((repo) => repo.wordsSince({ since, limit: 20 }));
       for (const event of batch.events) {
         for (const word of event.words) {
-          if (state.done[word.id] || word.actor?.id === (config.actor ?? ORGANIZER_ACTOR)) continue;
+          if (state.done[word.id] || [config.actor ?? ORGANIZER_ACTOR, IMPORT_ACTOR].includes(word.actor?.id)) continue;
           await foldAndLog(directory, config, state, event.id, word.id, 'sweep', ask);
           folded += 1;
           writeState(directory, state);

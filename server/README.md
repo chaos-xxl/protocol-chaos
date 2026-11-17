@@ -9,6 +9,7 @@ npx -y protocol-chaos@0.2 [--data <directory>] [--tools <groups>] [--owner-tools
 npx -y protocol-chaos@0.2 --http 127.0.0.1:8721 [--data <directory>] [--tools <groups>]  # MCP over HTTP, several computers
 npx -y protocol-chaos@0.2 clients add <name> [--tools <groups>] | tools <name> <groups> | list | remove <name>  # the tokens for HTTP
 npx -y protocol-chaos@0.2 init | uninstall | doctor                                   # connect the agents on this computer
+npx -y protocol-chaos@0.2 import [--yes] | --status | --undo                          # import other assistants' memories
 node server/index.mjs …                                                              # the same, from a clone
 ```
 
@@ -49,7 +50,7 @@ Add `entities` to either, as in `writer,entities`, for an assistant that keeps f
 `init` connects the agents on one computer to one repository, `uninstall` takes that back, and `doctor` checks it. macOS and Linux.
 
 ```sh
-npx protocol-chaos init [--only claude-code,codex,dsh,hermes] [--organizer <agent>|none] [--no-schedule] [--yes] [--dry-run] [--data <directory>]
+npx protocol-chaos init [--only claude-code,codex,dsh,hermes,kiro,cursor] [--organizer <agent>|none] [--no-schedule] [--no-import] [--yes] [--dry-run] [--data <directory>]
 npx protocol-chaos uninstall [--only …] [--dry-run] [--data <directory>]
 npx protocol-chaos doctor [--data <directory>]
 ```
@@ -65,8 +66,12 @@ What `init` puts in place:
 | Codex (`codex`) | a `[mcp_servers.protocol_chaos]` table at the end of `config.toml` in `$CODEX_HOME` (default `~/.codex`) | Codex shows a server's instructions only as the description of its tools ([openai/codex#29097](https://github.com/openai/codex/issues/29097)), so `init` also writes them into `AGENTS.md` there, unless that file already mentions `protocol_chaos`. |
 | DeepSeek Harness (`dsh`) | one `@deepseek-ai/dsh-mcp-client` entry at the end of `cordis.patch.yml` in `$DSH_HOME` (default `~/.dsh`), the patch layer of every profile | DeepSeek Harness puts the server's instructions in its system prompt. |
 | Hermes (`hermes`) | the server over HTTP on `127.0.0.1` (port 8721, or the next free one up to 8725), started at login by launchd or a systemd user service; a token for the client `hermes`; `PROTOCOL_CHAOS_URL` and `PROTOCOL_CHAOS_TOKEN` at the end of `.env` in `$HERMES_HOME` (default `~/.hermes`); the `protocol_chaos` MCP server (`hermes config set`); and the plugin (`hermes plugins install … --enable`) | The plugin puts an overview of the open matters, with their ids, in the system prompt; the model opens matters through the MCP server. |
+| Kiro (`kiro`) | a `protocol_chaos` entry under `mcpServers` in `~/.kiro/settings/mcp.json`, which the IDE and Kiro CLI share | Kiro does not show a server's instructions to its model, so `init` writes them as a steering file, `~/.kiro/steering/protocol-chaos.md`, with no front matter: Kiro includes such a file in every conversation. Not when a steering file there already mentions `protocol_chaos`. |
+| Cursor (`cursor`) | a `protocol_chaos` entry under `mcpServers` in `~/.cursor/mcp.json` | Cursor does not show a server's instructions to its model either, and keeps its User Rules in its own settings, so `init` writes them as a skill, `~/.cursor/skills/protocol-chaos/SKILL.md`, whose description (which the model always sees) carries the main rule. Not when a skill there already mentions `protocol_chaos`. |
 
-Text `init` adds to a file sits between `protocol-chaos:begin` and `protocol-chaos:end`. Every change is recorded in `<data>/installed.json`, and every file is copied to `<data>/backups/` before it is edited. `uninstall` takes the changes back in reverse order: the files are as they were, byte for byte, unless you edited them in between, and a file `init` created is deleted. When no agent is left, it removes the launcher and the server too, and keeps the repository.
+Where the instructions are written down (Codex, Kiro, Cursor), one line follows them: when the server offers the tool `memories_import`, call it in the first reply ([Importing other assistants' memories](#importing-other-assistants-memories)).
+
+Text `init` adds to a file sits between `protocol-chaos:begin` and `protocol-chaos:end`; a JSON settings file gets one more entry, written with the file's own indentation, and a file that is not plain JSON (with comments, say) is refused, to be edited by hand. Every change is recorded in `<data>/installed.json`, and every file is copied to `<data>/backups/` before it is edited. `uninstall` takes the changes back in reverse order: the files are as they were, byte for byte, unless you edited them in between (then only what `init` added is taken out), and a file `init` created is deleted. When no agent is left, it removes the launcher and the server too, and keeps the repository.
 
 An agent that already has a `protocol_chaos` server (for Hermes, a `PROTOCOL_CHAOS_URL` in its `.env`) is left as it is. When that server is elsewhere (a URL), the agents `init` would connect now would get a separate repository on this computer, not that one: `init` says so and asks, and with `--yes` it does not connect them. Hermes folds the words it records itself, with its plugin, so the server does not queue them for the organizer.
 
@@ -93,11 +98,33 @@ An assistant records the user's words with `event_note` and goes on; folding the
 
 The organizer is one of the connected agents, run headless: **DeepSeek Harness** (`dsh --profile headless --permission-mode read-only --approval-policy never --json`, with an overlay that uses the keys saved in the app, leaves out every tool, the session title, the upload of the session log and the session history on disk, and runs `deepseek-flash` with thinking off: about 1,400 tokens and 2 seconds a sentence), then **Claude Code** (`claude -p`, with the `haiku` model, no tools, no MCP servers and a spending cap of 0.2 USD a call), then **Codex** (`codex exec`, read-only; not yet run by us). `init` picks the first connected one and says what it sends: the matter and its recent words go to that agent's model provider. `--organizer claude-code` picks another, `--organizer none` turns organizing off, and `--no-schedule` leaves out the daily sweep. The choice is in `<data>/organizer.json`.
 
+Kiro and Cursor cannot organize: neither has a headless run tried by us yet. When none of the connected agents can (or organizing is turned off), each `event_note` an agent connected by `init` makes is answered with a second text after the receipt, reminding its model to bring the matter's fields up to date itself with `event_record_expression`. Hermes is not reminded: its plugin folds its own words.
+
 The organizer's runs cannot start the organizer again: its words are not queued, its agent runs without this repository's MCP server, and every process it starts carries `PROTOCOL_CHAOS_ORGANIZING=1`. `npx protocol-chaos organize --status` shows the organizer, the queue and the last runs; the log (`<data>/organizer/log.jsonl`) holds ids, outcomes, times and token counts, never words. An organizer run that calls a tool anyway is not used, and words whose fold fails three times are given up, so that the daily sweep does not pay for them every day. A check of the rules with real models, and an end-to-end run with DeepSeek Harness, are in [eval/organize/](../eval/organize/README.md).
+
+## Importing other assistants' memories
+
+A new repository starts empty, while the assistants on the computer already keep notes about the user. `npx protocol-chaos import` (and `init`, once) reads those notes and turns the matters they show into Events:
+
+```sh
+npx protocol-chaos import [--yes] [--only <agents>] [--data <directory>]   show what it would read and cost, ask, import
+npx protocol-chaos import --status [--data <directory>]                    how far it got; the report when done
+npx protocol-chaos import --undo [--data <directory>]                      cancel the matters the import started
+```
+
+**What it reads.** Claude Code's `CLAUDE.md` and memory folders (`~/.claude/projects/*/memory/`, without the index `MEMORY.md`), Codex's `AGENTS.md` and `memories/`, Gemini CLI's `GEMINI.md`, Hermes's `MEMORY.md` and `USER.md` (and each profile's), the steering files Kiro includes in every conversation, Cursor's `AGENTS.md` and `rules/`, and DeepSeek Harness's `AGENTS.md`. It leaves out the blocks `init` wrote, files that hold rules for using this repository (they name `protocol_chaos` or its tools), steering files Kiro includes only in some conversations, and files over 60,000 characters. Keys, tokens, passwords, ID and card numbers are replaced by `[hidden]` before anything is sent. The files are only read.
+
+**Asking first.** The plan says which files it would read and leave out, how many parts it would send, about how many tokens and minutes that takes (an estimate), and where the text goes: the memory files and the repository stay on the computer; to organize them, the text is sent to the organizer's model, through that agent's provider, as when you use the agent yourself; Protocol Chaos itself has no server and sends nothing anywhere else. `init` asks in the terminal; with `--yes`, or without a terminal, it leaves the import pending, and `--no-import` declines it.
+
+**In an assistant.** While an import is pending, running, or finished but not yet reported, a connection from this computer that records words is offered one more tool, `memories_import`, and the server's instructions end with a paragraph saying so (where the instructions are written down instead, the line `init` adds there does the same). The assistant calls it with action `status` in its first reply, tells the user what the plan says and asks; `start` and `decline` follow the user's answer. A pending import nobody answers is offered on three days, then no more. When it is done, `status` returns the report: how many matters were started and added to, the tokens used, any problems, and the tree of open matters, the new ones marked `+`; the assistant shows it and calls `finish`, and the tool is not offered again.
+
+**How it runs.** With an organizer, in the background (`protocol-chaos import --run`, started detached): one call to the organizer's model per part of about 6,000 characters, shown the repository's open matters and the part (`IMPORT_INSTRUCTIONS` in `memories.mjs`). The model lists the matters the part shows, each with the sentences of the notes it rests on, copied exactly; a matter none of whose sentences is in the part is left out, so nothing is written that the notes do not say. Each matter is written as `{"kind": "agent", "id": "importer"}`: a new one with `event_note` (`accountSource: "authorized_external"`, `via` naming the file, its title, and its parent when it is a part of another), then its state, progress and facts with `event_record_expression`, grounded on those words; words on a matter the repository holds already are added to it, and only the facts it lacks are filled in. The repository is copied to `<data>/import/` first. A desktop notification says when it is done (macOS, or `notify-send` on Linux). Without an organizer (only Kiro or Cursor connected, say), the assistant in the conversation does the model's part: `start` hands it the first part and the same rules, and it answers each part with `record`.
+
+`--undo` cancels the matters the import started, except those someone has written on since; words are never deleted. The state is in `<data>/import/state.json`, and the log (`<data>/import/log.jsonl`) holds parts, outcomes, times and token counts, never words. A check with a real model is in [eval/import/](../eval/import/README.md).
 
 ## Storage
 
-The repository is one file, `repository.json`, in the export format of §8.6. You can read it, back it up by copying it, and move it to another server by importing it. The file is created readable only by you, and the server sends it nowhere.
+The repository is one file, `repository.json`, in the export format of §8.6. You can read it, back it up by copying it, and move it to another server by importing it. The file is created readable only by you, and the server never sends it anywhere; what the organizer and an import send to a model is said in their sections above.
 
 Several assistants on one computer can share it: each usually starts its own server process. A write takes a lock file, reads what the other processes committed, and replaces the file in one step, so no process overwrites another's words and the file is never half-written. A damaged file is reported by every call and left as it is.
 
@@ -160,4 +187,4 @@ The server keeps no sessions: each request is answered on its own, so it can be 
 npm test
 ```
 
-runs the storage tests (restart, several processes, a damaged file), the HTTP tests (tokens, browser requests, revocation, and the conformance tests over HTTP), and the conformance tests over stdio.
+runs the storage tests (restart, several processes, a damaged file), the HTTP tests (tokens, browser requests, revocation, and the conformance tests over HTTP), the installer tests (every agent in a throwaway home folder, put back byte for byte), the organizer and import tests (with a stand-in for the model), and the conformance tests over stdio.

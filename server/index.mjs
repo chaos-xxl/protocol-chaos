@@ -10,6 +10,7 @@
 //                  | list | remove <name> [--data <directory>]
 //   protocol-chaos init | uninstall | doctor   connect the agents on this machine (install.mjs)
 //   protocol-chaos organize --pending | --sweep | --status   organizing in the background (organize.mjs)
+//   protocol-chaos import [--yes] | --status | --undo   import other assistants' memories (memories.mjs)
 //
 // --data         where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
 // --client       over stdio, the name of the assistant on the other end, such as codex: the
@@ -29,6 +30,7 @@
 //                Plain HTTP only on a loopback address; otherwise give --tls-cert and --tls-key.
 //
 // Over stdio nothing but MCP messages is written to stdout. Nothing that is said is logged.
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -39,7 +41,8 @@ import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } fr
 import { CLIENT_NAME, Clients } from './clients.mjs';
 import { isLoopback, parseListen, PATH, serveHttp } from './http.mjs';
 import { instructions } from './instructions.mjs';
-import { queueFold } from './organize.mjs';
+import { importOffer, memoriesTool } from './memories.mjs';
+import { ORGANIZER_ACTOR, queueFold, readOrganizer } from './organize.mjs';
 import { Store } from './store.mjs';
 import { ACCOUNT_SOURCES, ACTOR_KINDS, ProtocolError, STATES } from './validate.mjs';
 
@@ -56,6 +59,10 @@ if (['init', 'uninstall', 'doctor'].includes(args[commandAt])) {
 if (args[commandAt] === 'organize') {
   const { runOrganize } = await import('./organize.mjs');
   process.exit(await runOrganize(rest));
+}
+if (args[commandAt] === 'import') {
+  const { runImportCommand } = await import('./memories.mjs');
+  process.exit(await runImportCommand(rest));
 }
 const option = (name) => {
   const index = args.indexOf(name);
@@ -105,7 +112,7 @@ try {
 }
 
 if (positional[0] === 'clients') clientsCommand(positional.slice(1));
-if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: init | uninstall | doctor | clients add <name> | tools <name> <groups> | list | remove <name>.`);
+if (positional.length) usage(`Unknown command: ${positional.join(' ')}. Commands: init | uninstall | doctor | organize | import | clients add <name> | tools <name> <groups> | list | remove <name>.`);
 const stdioClient = option('--client');
 if (stdioClient !== undefined && option('--http')) usage('--client is for stdio. Over HTTP every token names its client (clients add <name>).');
 if (stdioClient !== undefined && !CLIENT_NAME.test(stdioClient)) usage(`--client takes a name of lowercase letters, digits, ".", "_" and "-", such as codex; got "${stdioClient}"`);
@@ -498,6 +505,30 @@ const TOOLS = [
   },
 ];
 
+// The import of other assistants' memories (memories.mjs): offered only to a connection from
+// this machine that records words, and only while there is an import to offer, follow or report.
+const IMPORT_TOOL = {
+  name: 'memories_import',
+  description: "Offered only while memories that other assistants keep on this machine wait to be imported, are being imported, or wait to be reported. Once per conversation, in your first reply, call it with action status and follow what it returns: it says what to tell the user and what to do next. start or decline only on the user's answer; record hands back a part of an import that runs in this conversation; finish once the report is shown.",
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['status', 'start', 'decline', 'record', 'finish'] },
+      sources: { type: 'array', items: { type: 'string' }, description: 'For start: only these assistants, by the ids in the plan.' },
+      part: { type: 'integer', minimum: 1, description: 'For record: the number of the part the matters are from.' },
+      matters: { type: 'array', items: { type: 'object' }, description: 'For record: the matters the part shows, as its instructions say.' },
+    },
+    required: ['action'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false },
+};
+
+// After a note, where nobody organizes in the background (init found no agent that can run
+// headless, or organizing was turned off), the assistant brings the fields up to date itself.
+const FIELDS_HINT = 'Nobody organizes this repository in the background on this machine, so bring the Event up to date yourself: when these words establish its title, state, progress, goal, constraint, plan or refs, call event_record_expression with the accountId and text of this receipt, its version as expectedVersion, and each changed field\'s complete new content.';
+const managedByInit = () => existsSync(join(directory, 'installed.json'));
+
 /** The tools a connection is offered: those of its groups; the owner's only with --owner-tools. */
 const serverTools = toolsOption ?? GROUPS;
 const offerings = new Map();
@@ -537,22 +568,40 @@ function checkClient(tool, input, client, remote) {
 const { version } = createRequire(import.meta.url)('../package.json');
 const SERVER_ENTRY = fileURLToPath(import.meta.url);
 
+// Whether the HTTP server listens on a loopback address: its clients are then on this machine.
+let loopbackHttp = false;
+
 /** One MCP server: for stdio, the only one; over HTTP, one per request, bound to its client. */
 function createServer({ client, remote = true } = {}) {
-  const { tools: offered, byName } = offeringFor(groupsOf(remote ? client : undefined));
+  const groups = groupsOf(remote ? client : undefined);
+  const { tools: offered, byName } = offeringFor(groups);
+  // The import reads files on this machine, so only a connection from this machine is offered it.
+  const importing = (!remote || loopbackHttp) && groups.includes('record') && client !== ORGANIZER_ACTOR;
   const server = new Server(
     { name: 'protocol-chaos-reference', version },
-    { capabilities: { tools: {} }, instructions: instructions(client) },
+    { capabilities: { tools: {} }, instructions: instructions(client, { importStatus: importing ? importOffer(directory) : undefined }) },
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: offered.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
+    tools: [...offered, ...(importing && importOffer(directory) ? [IMPORT_TOOL] : [])]
+      .map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const input = request.params.arguments ?? {};
+    if (importing && request.params.name === IMPORT_TOOL.name) {
+      try {
+        const body = await memoriesTool(directory, input, { entry: SERVER_ENTRY, store });
+        return { content: [{ type: 'text', text: JSON.stringify(body) }] };
+      } catch (error) {
+        const body = error instanceof ProtocolError
+          ? { code: error.code, message: error.message }
+          : { code: 'INTERNAL_ERROR', message: `The import failed unexpectedly (${error.message}). Call status.` };
+        return { content: [{ type: 'text', text: JSON.stringify(body) }], isError: true };
+      }
+    }
     const tool = byName.get(request.params.name);
     if (!tool) throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${request.params.name}`);
-    const input = request.params.arguments ?? {};
     let body;
     let isError = false;
     try {
@@ -566,9 +615,15 @@ function createServer({ client, remote = true } = {}) {
         ? { code: error.code, message: error.message }
         : { code: 'INTERNAL_ERROR', message: 'The server failed unexpectedly; nothing was changed. Retry, and report it if it persists.' };
     }
-    // Recorded words are folded into their matter in the background, when init chose an organizer.
-    if (!isError && tool.name === 'event_note') queueFold({ directory, eventId: body.eventId, accountId: body.accountId, client, entry: SERVER_ENTRY });
     const result = { content: [{ type: 'text', text: JSON.stringify(body) }] };
+    // Recorded words are folded into their matter in the background, when init chose an organizer;
+    // where init found none, the assistant is reminded to fold them itself.
+    if (!isError && tool.name === 'event_note') {
+      const queued = queueFold({ directory, eventId: body.eventId, accountId: body.accountId, client, entry: SERVER_ENTRY });
+      if (!queued && !remote && client && client !== 'hermes' && groups.includes('fields') && managedByInit() && !readOrganizer(directory)) {
+        result.content.push({ type: 'text', text: FIELDS_HINT });
+      }
+    }
     if (isError) result.isError = true;
     return result;
   });
@@ -587,6 +642,7 @@ if (option('--http')) {
   }
   const clients = new Clients(directory);
   registry = clients;
+  loopbackHttp = isLoopback(listen.host);
   let httpServer;
   try {
     httpServer = await serveHttp({

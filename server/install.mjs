@@ -9,8 +9,8 @@
 // installs this server into <data>/runtime, writes a launcher at <data>/bin/protocol-chaos,
 // and gives each agent an MCP server named protocol_chaos that runs the launcher with the
 // agent's own name. The agent's model is told how to use the repository by the server's
-// instructions; where an agent does not show those to its model as instructions (Codex),
-// init also writes them where the agent keeps standing instructions. Agents read the
+// instructions; where an agent does not show those to its model as instructions (Codex, Kiro,
+// Cursor), init also writes them where the agent keeps standing instructions. Agents read the
 // directory themselves and open what they need: nothing is added to a turn before the model
 // answers. Every change is recorded in <data>/installed.json, and every file edited is copied
 // to <data>/backups first. uninstall undoes the changes and keeps the repository.
@@ -20,12 +20,17 @@
 // matter in the background with one headless call to that agent's model (organize.mjs), and a
 // daily sweep at 04:00 folds what was missed; it calls no model when nothing was recorded.
 //
-// Agents: claude-code, codex, dsh (DeepSeek Harness), hermes. Hermes reaches the server over
-// HTTP, so for it init also runs `launcher --http 127.0.0.1:<port>` at login, issues it a token,
-// writes both into Hermes's .env, adds the protocol_chaos MCP server and installs the plugin.
-// An agent that already has an MCP server named protocol_chaos is left as it is. Where each
-// agent keeps its settings follows its own variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME,
-// HERMES_HOME.
+// Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, kiro, cursor. Hermes reaches the
+// server over HTTP, so for it init also runs `launcher --http 127.0.0.1:<port>` at login, issues
+// it a token, writes both into Hermes's .env, adds the protocol_chaos MCP server and installs the
+// plugin. Kiro gets an entry in ~/.kiro/settings/mcp.json and a global steering file; Cursor an
+// entry in ~/.cursor/mcp.json and a skill. An agent that already has an MCP server named
+// protocol_chaos is left as it is. Where each agent keeps its settings follows its own
+// variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME, HERMES_HOME.
+//
+// Import: the memories other assistants keep on this machine (memories.mjs) can be imported
+// once. init shows what would be read and what it would cost and asks; with --yes, or without
+// a terminal, the assistants offer it in their next conversation instead.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { accessSync, chmodSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -36,7 +41,8 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { Clients } from './clients.mjs';
-import { instructions } from './instructions.mjs';
+import { IMPORT_STATIC, instructions } from './instructions.mjs';
+import { declineImport, describePlan, pendImport, planImport, readImport, startImport } from './memories.mjs';
 import { ORGANIZER_ACTOR, ORGANIZER_FILE } from './organize.mjs';
 
 const { version } = createRequire(import.meta.url)('../package.json');
@@ -47,15 +53,17 @@ const SERVER_NAME = 'protocol_chaos';
 const TOOLS = 'writer';
 const NOTE = 'added by `npx protocol-chaos init`; `npx protocol-chaos uninstall` removes it';
 const HELP = `Usage:
-  protocol-chaos init [--only <agents>] [--organizer <agent>|none] [--no-schedule] [--yes] [--dry-run] [--data <directory>]
+  protocol-chaos init [--only <agents>] [--organizer <agent>|none] [--no-schedule] [--no-import] [--yes] [--dry-run] [--data <directory>]
   protocol-chaos uninstall [--only <agents>] [--dry-run] [--data <directory>]
   protocol-chaos doctor [--data <directory>]
 
-Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, comma-separated for --only.
---yes      connect every agent found, without asking
+Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, kiro, cursor, comma-separated for --only.
+--yes      connect every agent found, without asking; the import of other assistants' memories
+           is then offered by the assistants, not started
 --organizer  the agent whose model organizes in the background: dsh, claude-code, codex, or none
              (default: the first connected of dsh, claude-code, codex)
 --no-schedule  no daily sweep at 04:00 (words are still organized after each note)
+--no-import  do not offer to import other assistants' memories (\`protocol-chaos import\` still can)
 --dry-run  show what would change and change nothing
 --data     where the repository lives; default $PROTOCOL_CHAOS_DATA, then ~/.protocol-chaos
 `;
@@ -76,6 +84,7 @@ export async function runInstaller(command, argv, env = process.env) {
         runtime: { type: 'string' },
         organizer: { type: 'string' },
         'no-schedule': { type: 'boolean' },
+        'no-import': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
       strict: true,
@@ -203,6 +212,104 @@ function markedRegion(content) {
 
 const hasMarkedBlock = (file) => existsSync(file) && Boolean(markedRegion(readFileSync(file, 'utf8')));
 
+/** The folders that writing this file would create, outermost first. */
+function missingFolders(file) {
+  const folders = [];
+  for (let folder = dirname(file); !existsSync(folder) && dirname(folder) !== folder; folder = dirname(folder)) folders.unshift(folder);
+  return folders;
+}
+
+/** Removes the folders a change created, innermost first, as long as they are empty. */
+function removeEmptyFolders(folders = []) {
+  for (const folder of [...folders].reverse()) {
+    if (existsSync(folder) && !readdirSync(folder).length) rmSync(folder, { recursive: true });
+  }
+}
+
+/** Writes a file that is not there yet; returns the change. */
+function createFile(file, text, mode = 0o644) {
+  const folders = missingFolders(file);
+  writeAtomic(file, text, mode);
+  return { kind: 'file', file, sha256: sha256(text), folders };
+}
+
+function removeFile(change) {
+  if (!existsSync(change.file)) return `${change.file} is gone already`;
+  if (sha256(readFileSync(change.file, 'utf8')) !== change.sha256) return `left ${change.file} as it is: it was edited since init wrote it`;
+  rmSync(change.file);
+  removeEmptyFolders(change.folders);
+  return `removed ${change.file}`;
+}
+
+/**
+ * The JSON settings file of an agent that keeps its MCP servers under "mcpServers" (Kiro,
+ * Cursor), checked before anything is changed: init adds to plain JSON objects only.
+ */
+function checkJsonSettings(file) {
+  if (!existsSync(file)) return;
+  const text = readFileSync(file, 'utf8');
+  let config;
+  try {
+    config = text.trim() ? JSON.parse(text) : {};
+  } catch {
+    throw new InstallError(`${file} is not plain JSON (it may hold comments), so init cannot add to it. Add the entry from server/README.md by hand.`);
+  }
+  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+  if (!plain(config) || (config.mcpServers !== undefined && !plain(config.mcpServers))) {
+    throw new InstallError(`${file} does not hold an "mcpServers" object init can add to. Add the entry from server/README.md by hand.`);
+  }
+}
+
+/** Adds the protocol_chaos entry to mcpServers, keeping the file's indentation; returns the change. */
+function addJsonEntry(ctx, file, entry) {
+  const existed = existsSync(file);
+  const original = existed ? readFileSync(file, 'utf8') : '';
+  const config = original.trim() ? JSON.parse(original) : {};
+  config.mcpServers = { ...(config.mcpServers ?? {}), [SERVER_NAME]: entry };
+  const indent = /^([ \t]+)"/m.exec(original)?.[1] ?? 2;
+  const text = `${JSON.stringify(config, null, indent)}\n`;
+  const folders = existed ? [] : missingFolders(file);
+  const saved = existed ? backup(ctx, file) : undefined;
+  writeAtomic(file, text, existed ? modeOf(file) : 0o600);
+  return { kind: 'json', file, created: !existed, backup: saved, writtenSha256: sha256(text), folders };
+}
+
+/** Takes the entry back out: the file as it was when nobody changed it since, otherwise only the entry. */
+function removeJsonEntry(change) {
+  if (!existsSync(change.file)) return `${change.file} is gone already`;
+  const current = readFileSync(change.file, 'utf8');
+  if (sha256(current) === change.writtenSha256) {
+    if (change.created) {
+      rmSync(change.file);
+      removeEmptyFolders(change.folders);
+      return `removed ${change.file} (it was created by init)`;
+    }
+    if (change.backup && existsSync(change.backup)) {
+      const mode = modeOf(change.file);
+      const temporary = `${change.file}.${process.pid}.tmp`;
+      copyFileSync(change.backup, temporary);
+      chmodSync(temporary, mode);
+      renameSync(temporary, change.file);
+      return `put ${change.file} back as it was`;
+    }
+  }
+  let config;
+  try {
+    config = JSON.parse(current);
+  } catch {
+    return `${change.file} is no longer plain JSON; remove its ${SERVER_NAME} entry by hand`;
+  }
+  if (!config?.mcpServers?.[SERVER_NAME]) return `no ${SERVER_NAME} entry left in ${change.file}; nothing to remove`;
+  delete config.mcpServers[SERVER_NAME];
+  if (change.created && Object.keys(config).length === 1 && !Object.keys(config.mcpServers).length) {
+    rmSync(change.file);
+    removeEmptyFolders(change.folders);
+    return `removed ${change.file} (it was created by init)`;
+  }
+  writeAtomic(change.file, `${JSON.stringify(config, null, /^([ \t]+)"/m.exec(current)?.[1] ?? 2)}\n`, modeOf(change.file));
+  return `removed the ${SERVER_NAME} entry from ${change.file}`;
+}
+
 // --------------------------------------------------------------------------------- commands
 
 /** The absolute path of a command on PATH, or undefined. */
@@ -237,6 +344,9 @@ const yamlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
 /** The arguments each agent's MCP entry passes to the launcher. */
 const serverArgs = (client) => ['--client', client, '--tools', TOOLS];
+
+/** What init writes where an agent keeps standing instructions: the server's, and the import line. */
+export const standingInstructions = (client) => `${instructions(client)}\n\n${IMPORT_STATIC}`;
 
 const claudeConfigFile = (ctx) => (ctx.env.CLAUDE_CONFIG_DIR
   ? join(resolve(ctx.env.CLAUDE_CONFIG_DIR), '.claude.json')
@@ -338,7 +448,7 @@ const codex = {
         `<!-- protocol-chaos:begin (${NOTE}) -->`,
         `## Protocol Chaos (MCP server \`${SERVER_NAME}\`)`,
         '',
-        instructions(this.id),
+        standingInstructions(this.id),
         '<!-- protocol-chaos:end -->',
       ].join('\n');
       steps.push({ say: `add the server's instructions to ${agents}`, apply: () => addBlock(ctx, agents, block) });
@@ -552,7 +662,127 @@ const hermes = {
   },
 };
 
-export const AGENTS = [claudeCode, codex, dsh, hermes];
+/** The protocol_chaos entry of an agent's JSON settings file, as `existing` reports it. */
+function jsonEntry(file) {
+  const entry = readJson(file)?.mcpServers?.[SERVER_NAME];
+  return entry ? { text: describeEntry(entry), url: entry.url } : undefined;
+}
+
+function verifyJson(ctx, file) {
+  const entry = readJson(file)?.mcpServers?.[SERVER_NAME];
+  if (!entry) return { ok: false, text: `no ${SERVER_NAME} server in ${file}` };
+  return entry.command === ctx.launcher
+    ? { ok: true, text: `${SERVER_NAME} runs the launcher (${file})` }
+    : { ok: false, text: `${SERVER_NAME} in ${file} runs ${describeEntry(entry)}, not the launcher` };
+}
+
+/** The Markdown files in a folder that already mention protocol_chaos, if any. */
+function mentioning(folder, depth = 0) {
+  if (!existsSync(folder)) return undefined;
+  for (const name of readdirSync(folder)) {
+    const path = join(folder, name);
+    let info;
+    try {
+      info = statSync(path);
+    } catch {
+      continue;
+    }
+    if (info.isDirectory() && depth < 2) {
+      const found = mentioning(path, depth + 1);
+      if (found) return found;
+    } else if (info.isFile() && name.endsWith('.md') && readFileSync(path, 'utf8').includes(SERVER_NAME)) {
+      return path;
+    }
+  }
+  return undefined;
+}
+
+const WRITTEN_BY = `<!-- Written by \`npx protocol-chaos init\`; \`npx protocol-chaos uninstall\` removes it unless you edit it. -->`;
+const kiroHome = (ctx) => join(ctx.home, '.kiro');
+
+// Kiro keeps MCP servers in ~/.kiro/settings/mcp.json (the IDE and Kiro CLI both read it) and
+// does not show a server's instructions to its model, so the rules go into a global steering
+// file: one without front matter is included in every conversation.
+const kiro = {
+  id: 'kiro',
+  name: 'Kiro',
+  find(ctx) {
+    const command = which(ctx, 'kiro') ?? which(ctx, 'kiro-cli');
+    if (command) return { found: true, where: command };
+    if (existsSync(kiroHome(ctx))) return { found: true, where: kiroHome(ctx) };
+    return { found: false };
+  },
+  existing(ctx) {
+    return jsonEntry(join(kiroHome(ctx), 'settings', 'mcp.json'));
+  },
+  plan(ctx) {
+    const settings = join(kiroHome(ctx), 'settings', 'mcp.json');
+    checkJsonSettings(settings);
+    const steps = [{
+      say: `add ${SERVER_NAME} to mcpServers in ${settings}`,
+      apply: () => addJsonEntry(ctx, settings, { command: ctx.launcher, args: serverArgs(this.id) }),
+    }];
+    const steering = join(kiroHome(ctx), 'steering', 'protocol-chaos.md');
+    const mentions = mentioning(dirname(steering));
+    if (mentions) {
+      steps.push({ say: `leave the steering files as they are: ${mentions} already mentions ${SERVER_NAME}`, apply: () => undefined });
+    } else if (existsSync(steering)) {
+      steps.push({ say: `leave ${steering} as it is: a file of that name is there already, so Kiro is not given the server's instructions`, apply: () => undefined });
+    } else {
+      const text = [WRITTEN_BY, `# Protocol Chaos (MCP server \`${SERVER_NAME}\`)`, '', standingInstructions(this.id), ''].join('\n');
+      steps.push({ say: `write the server's instructions to ${steering} (a steering file Kiro includes in every conversation)`, apply: () => createFile(steering, text) });
+    }
+    return steps;
+  },
+  verify(ctx) {
+    return verifyJson(ctx, join(kiroHome(ctx), 'settings', 'mcp.json'));
+  },
+};
+
+const cursorHome = (ctx) => join(ctx.home, '.cursor');
+const CURSOR_SKILL_DESCRIPTION = "The user's long-lived matters (trips, plans, purchases, commitments, ambitions) live in the protocol_chaos MCP server, shared by all their assistants. Use this skill whenever the user talks about their own plans or commitments, refers to something they said before, or states a plan, purchase, trip, target or arrangement: read the directory (context_pack) before answering about their matters, and after answering record their words with event_note. Also when the server offers memories_import: call it with action status in your first reply.";
+
+// Cursor keeps MCP servers in ~/.cursor/mcp.json and does not show a server's instructions to
+// its model; it has no global rules file either (User Rules live in its settings), so the rules
+// go into a skill, whose description the model always sees.
+const cursor = {
+  id: 'cursor',
+  name: 'Cursor',
+  find(ctx) {
+    const command = which(ctx, 'cursor') ?? which(ctx, 'cursor-agent');
+    if (command) return { found: true, where: command };
+    if (existsSync(cursorHome(ctx))) return { found: true, where: cursorHome(ctx) };
+    return { found: false };
+  },
+  existing(ctx) {
+    return jsonEntry(join(cursorHome(ctx), 'mcp.json'));
+  },
+  plan(ctx) {
+    const settings = join(cursorHome(ctx), 'mcp.json');
+    checkJsonSettings(settings);
+    const steps = [{
+      say: `add ${SERVER_NAME} to mcpServers in ${settings}`,
+      apply: () => addJsonEntry(ctx, settings, { command: ctx.launcher, args: serverArgs(this.id) }),
+    }];
+    const skill = join(cursorHome(ctx), 'skills', 'protocol-chaos', 'SKILL.md');
+    const mentions = mentioning(join(cursorHome(ctx), 'skills'));
+    if (mentions) {
+      steps.push({ say: `leave the skills as they are: ${mentions} already mentions ${SERVER_NAME}`, apply: () => undefined });
+    } else if (existsSync(dirname(skill))) {
+      steps.push({ say: `leave ${dirname(skill)} as it is: a skill of that name is there already, so Cursor is not given the server's instructions`, apply: () => undefined });
+    } else {
+      const text = ['---', 'name: protocol-chaos', `description: ${JSON.stringify(CURSOR_SKILL_DESCRIPTION)}`, '---', '', WRITTEN_BY,
+        `# Protocol Chaos (MCP server \`${SERVER_NAME}\`)`, '', standingInstructions(this.id), ''].join('\n');
+      steps.push({ say: `write the server's instructions as the skill ${skill}`, apply: () => createFile(skill, text) });
+    }
+    return steps;
+  },
+  verify(ctx) {
+    return verifyJson(ctx, join(cursorHome(ctx), 'mcp.json'));
+  },
+};
+
+export const AGENTS = [claudeCode, codex, dsh, hermes, kiro, cursor];
 
 // ---------------------------------------------------------------------- runtime and launcher
 
@@ -720,8 +950,9 @@ async function setupOrganizer(ctx, state, options) {
   }
   const pick = asked ?? choices[0];
   if (!pick) {
-    if (connected.includes('hermes')) ctx.say('Organizing: Hermes folds the words it records itself (its plugin), and none of the other agents can run headless here.');
-    else if (connected.length) ctx.say('Organizing in the background: no connected agent can run headless here, so recorded words are not folded into their matters.');
+    const others = connected.filter((id) => id !== 'hermes').length;
+    if (connected.includes('hermes')) ctx.say(`Organizing: Hermes folds the words it records itself (its plugin)${others ? '; none of the other agents can run headless here, so each of them brings a matter\'s fields up to date itself after recording words (the server reminds it)' : ''}.`);
+    else if (connected.length) ctx.say('Organizing in the background: none of the connected agents can run headless here, so each assistant brings a matter\'s fields up to date itself after recording words (the server reminds it).');
     return;
   }
   const name = AGENTS.find((agent) => agent.id === pick).name;
@@ -752,11 +983,41 @@ async function setupOrganizer(ctx, state, options) {
   state.organizer = record;
 }
 
+// ----------------------------------------------------------------------------------- import
+
+/**
+ * Offers to import the memories other assistants keep here, once: in a terminal init asks;
+ * otherwise (--yes, no terminal, or no agent that can run in the background) the next
+ * assistant the user talks to offers it, and asks.
+ */
+async function offerImport(ctx, state, options) {
+  if (!Object.keys(state.agents).length || options['no-import'] || readImport(ctx.data)) return;
+  const plan = planImport(ctx.env, ctx.data);
+  if (!plan.files.length) return;
+  describePlan(plan, ctx.env).forEach((line) => ctx.say(line));
+  if (plan.mode === 'conversation') {
+    pendImport(ctx.data);
+    ctx.say('None of the connected agents can run in the background here, so the import runs in a conversation:');
+    ctx.say('the next assistant you talk to offers it, and asks you first.');
+  } else if (options.yes || !process.stdin.isTTY) {
+    pendImport(ctx.data);
+    ctx.say('Not started: the next assistant you talk to offers it, and asks you first. `npx protocol-chaos import` starts it here.');
+  } else if (['', 'y', 'yes'].includes(await ask('Import them now, in the background? [Y/n] '))) {
+    startImport(ctx.data, plan, { entry: state.runtime.entry });
+    ctx.say(`Importing in the background, about ${plan.estimate.minutes} minute${plan.estimate.minutes === 1 ? '' : 's'}. A notification says when it is done; then any assistant shows you the report.`);
+  } else {
+    declineImport(ctx.data, 'declined in init');
+    ctx.say('Not imported, and not offered again. `npx protocol-chaos import` imports later.');
+  }
+  ctx.say('');
+}
+
 // ------------------------------------------------------------------------------------- init
 
 async function init(ctx, options) {
   const state = readState(ctx);
   const wanted = options.only ? parseOnly(options.only) : undefined;
+  if (options['no-import'] && !ctx.dryRun && ['pending', 'failed'].includes(readImport(ctx.data)?.status)) declineImport(ctx.data, 'init --no-import');
   ctx.say(`Protocol Chaos ${version}: one repository for the agents on this machine, at ${ctx.data}`);
   ctx.say('');
   const rows = [];
@@ -777,7 +1038,10 @@ async function init(ctx, options) {
   ctx.say('');
   const candidates = rows.filter((row) => row.found.found && !row.ours && !row.existing).map((row) => row.agent);
   const refresh = rows.some((row) => row.ours) && runtimeStale(ctx, state, options);
-  const organizerWanted = Object.keys(state.agents).length > 0 && (options.organizer !== undefined || (!state.organizer?.agent && !state.organizer?.declined));
+  // An organizer is still to be chosen: one of the connected agents can organize, and none was chosen or declined.
+  const canOrganize = ORGANIZER_ORDER.some((id) => state.agents[id] && organizerCommand(ctx, id));
+  const organizerWanted = Object.keys(state.agents).length > 0
+    && (options.organizer !== undefined || (canOrganize && !state.organizer?.agent && !state.organizer?.declined));
   if (!candidates.length && !refresh && !organizerWanted) {
     ctx.say(rows.some((row) => row.ours) ? 'Nothing to do. `npx protocol-chaos doctor` checks the connections.' : 'No agent to connect.');
     return 0;
@@ -802,6 +1066,10 @@ async function init(ctx, options) {
     const connectedIds = [...Object.keys(state.agents), ...chosen.map((agent) => agent.id)];
     const organizer = options.organizer ?? ORGANIZER_ORDER.find((id) => connectedIds.includes(id) && organizerCommand(ctx, id));
     if (organizer && organizer !== 'none') ctx.say(`  organize in the background with ${organizer}, and schedule a daily sweep at 04:00${options['no-schedule'] ? ' (not with --no-schedule)' : ''}`);
+    if (!options['no-import'] && !readImport(ctx.data)) {
+      const found = planImport(ctx.env, ctx.data).files;
+      if (found.length) ctx.say(`  offer to import the memories of other assistants found here (${found.length} file${found.length === 1 ? '' : 's'}), showing what it reads and costs first`);
+    }
     return 0;
   }
   mkdirSync(ctx.data, { recursive: true, mode: 0o700 });
@@ -841,6 +1109,7 @@ async function init(ctx, options) {
     }
     writeState(ctx, state);
     ctx.say('');
+    await offerImport(ctx, state, options);
   }
   const connected = Object.values(state.agents).map((agent) => agent.name);
   if (connected.length) {
@@ -897,6 +1166,8 @@ async function confirmSeparate(ctx, remote, options) {
 
 function undo(ctx, change) {
   if (change.kind === 'block') return removeBlock(change);
+  if (change.kind === 'json') return removeJsonEntry(change);
+  if (change.kind === 'file') return removeFile(change);
   if (change.kind === 'command') {
     try {
       run(ctx, change.undo);
@@ -926,7 +1197,8 @@ function uninstall(ctx, options) {
   for (const id of present) {
     const agent = state.agents[id];
     for (const change of [...agent.changes].reverse()) {
-      ctx.say(`  ${agent.name}: ${ctx.dryRun ? `would undo ${change.kind === 'block' ? `the block in ${change.file}` : change.label}` : undo(ctx, change)}`);
+      const what = { block: `the block in ${change.file}`, json: `the ${SERVER_NAME} entry in ${change.file}`, file: `the file ${change.file}` }[change.kind] ?? change.label;
+      ctx.say(`  ${agent.name}: ${ctx.dryRun ? `would undo ${what}` : undo(ctx, change)}`);
     }
     if (!ctx.dryRun) delete state.agents[id];
   }
@@ -1001,6 +1273,11 @@ async function doctor(ctx) {
     const lines = existsSync(join(ctx.data, 'organizer', 'log.jsonl')) ? readFileSync(join(ctx.data, 'organizer', 'log.jsonl'), 'utf8').trim().split('\n') : [];
     const last = lines.length ? JSON.parse(lines[lines.length - 1]) : undefined;
     if (last) ctx.say(`       last run ${last.at}: ${last.run} ${last.outcome}${last.error ? `: ${last.error}` : ''}`);
+  }
+  const imported = readImport(ctx.data);
+  if (imported) {
+    const run = imported.run;
+    ctx.say(`       import of other assistants' memories: ${imported.status}${run ? ` (part ${run.chunk} of ${run.of}, ${run.created.length} new matters${run.errors?.length ? `, last problem: ${run.errors.at(-1)}` : ''})` : ''}`);
   }
   ctx.say(problems ? `${problems} problem${problems === 1 ? '' : 's'}. Running \`npx protocol-chaos init\` again repairs the launcher and the runtime.` : 'Everything answers. Start a new session in an agent for it to see the server.');
   return problems ? 1 : 0;

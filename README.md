@@ -32,13 +32,15 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex, DeepSeek Harness and Hermes on this computer and connects the ones you pick to one repository:
+You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex, DeepSeek Harness, Hermes, Kiro and Cursor on this computer and connects the ones you pick to one repository:
 
 ```sh
 npx protocol-chaos init
 ```
 
 Each agent gets an MCP server named `protocol_chaos` that writes under the agent's own name. The agents read the directory of your matters themselves and open the ones a message is about; nothing is added to a turn before the model answers. Every change is recorded, and every file edited is backed up first: `npx protocol-chaos uninstall` puts each file back as it was, and `npx protocol-chaos doctor` checks the connections. An agent that already has a `protocol_chaos` server is left as it is. One of them organizes in the background (DeepSeek Harness, then Claude Code, then Codex): after an assistant records your words, one call to that agent's model folds them into their matter, so every agent reads where it stands. What `init` writes for each agent is in [server/README.md](server/README.md#installer), and how organizing works in [Organizing in the background](server/README.md#organizing-in-the-background). For Hermes it also installs [its plugin](integrations/hermes/protocol-chaos/README.md).
+
+So that a new repository does not start empty, `init` also offers to import the memories your assistants keep on this computer (Claude Code's `CLAUDE.md` and memory folders, Codex's `AGENTS.md`, Hermes's `MEMORY.md`, Kiro's steering files and others). It shows first which files it would read and leave out, what it would cost in tokens and time, and where the text goes, and imports only when you say yes; without a terminal to ask in, the next assistant you talk to asks instead. The files are only read. The import runs in the background with the organizer's model (where no agent can run in the background, in a conversation with your assistant), and then any assistant shows you the matters it found, as a tree. See [Importing other assistants' memories](server/README.md#importing-other-assistants-memories).
 
 To connect an assistant by hand instead, add the reference server under the name `protocol_chaos`:
 
@@ -117,7 +119,7 @@ The specification is meant to be enough on its own. To check that, an agent that
 ## Your data
 
 - The repository belongs to its user, and can always be exported and moved to another server (§8.6).
-- The reference server keeps it in one file on the computer it runs on and sends it nowhere. Over HTTP it answers only assistants that hold a token you issued.
+- The reference server keeps it in one file on the computer it runs on. Protocol Chaos has no server of its own, and the reference server sends nothing to one. Two things leave the computer, both to the model of an agent you connected, through that agent's provider: when `init` set up an organizer, the matter being organized and its recent words; and when you agree to an import, the text of the memory files it reads (keys, tokens and long numbers hidden). Over HTTP the server answers only assistants that hold a token you issued.
 - Every connected assistant can currently read the whole repository; per-client visibility is not designed yet (§13). Connect only assistants you would trust with all of it. What an assistant reads enters its model context and is processed by its provider.
 - Assistants are told never to record passwords, tokens or identity-document numbers (§7).
 
@@ -128,6 +130,7 @@ Protocol Chaos is a draft, and drafts carry no compatibility promise. Draft 0.2 
 Next:
 
 - The [Hermes plugin](integrations/hermes/protocol-chaos/README.md) in Hermes's plugin catalog, once it has been in daily use for a while.
+- More agents for `init`, a few at a time, starting with OpenCode, OpenClaw, Claude Desktop, GitHub Copilot and Pi. Pull requests for others are welcome: each agent is one object in [server/install.mjs](server/install.mjs).
 - Per-client visibility: what each assistant may read (§13).
 - Recognising the same person across applications (§13).
 - Draft 0.3, from the cases people report.
