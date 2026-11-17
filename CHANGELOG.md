@@ -2,6 +2,10 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
+## Unreleased
+
+- `uninstall` also removes the empty `runtime` folder it left behind in the repository's folder once no agent is connected.
+
 ## protocol-chaos 0.2.4 (2026-11-17)
 
 - **`npx protocol-chaos init`** connects Claude Code, Codex, DeepSeek Harness and Hermes on one computer (macOS or Linux) to one repository, asking which (all by default; `--yes`, `--only`, `--dry-run`). It installs the server under the repository's folder with a launcher that apps started from the desktop can run, and gives each agent an MCP server named `protocol_chaos` under its own name with the `writer` tools. Codex does not show a server's instructions to its model as instructions, so `init` also writes them into Codex's `AGENTS.md`. For Hermes it runs the server over HTTP on `127.0.0.1` at login (launchd or systemd), issues Hermes a token, writes both into Hermes's `.env`, adds the `protocol_chaos` MCP server and installs the plugin. Agents read the directory themselves; nothing is added to a turn before the model answers. Every change is recorded and every file edited is backed up: `npx protocol-chaos uninstall` puts the files back byte for byte, and `npx protocol-chaos doctor` starts the server through the launcher and checks each agent's entry. Running `init` again repairs a launcher whose Node.js or server is gone. Agents that already have a `protocol_chaos` server are left alone, and `--yes` will not connect others to a separate repository when one of them uses a server elsewhere. See [server/README.md](server/README.md#installer).

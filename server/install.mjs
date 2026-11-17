@@ -943,6 +943,8 @@ function uninstall(ctx, options) {
     if (existsSync(ctx.launcher) && state.runtime?.launcherSha256 === sha256(readFileSync(ctx.launcher, 'utf8'))) rmSync(ctx.launcher);
     if (existsSync(dirname(ctx.launcher)) && !readdirSync(dirname(ctx.launcher)).length) rmSync(dirname(ctx.launcher), { recursive: true });
     if (state.runtime?.dir && existsSync(state.runtime.dir)) rmSync(state.runtime.dir, { recursive: true, force: true });
+    const runtimes = join(ctx.data, 'runtime');
+    if (existsSync(runtimes) && !readdirSync(runtimes).length) rmSync(runtimes, { recursive: true });
     rmSync(ctx.stateFile, { force: true });
     ctx.say(`No agent is connected now. The repository is kept at ${ctx.data}; delete that folder to remove it too.`);
   } else {

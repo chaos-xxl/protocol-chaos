@@ -159,7 +159,8 @@ test('without --runtime, init copies the server and its dependencies, and the co
   assert.equal(doctor.status, 0, doctor.stdout + doctor.stderr);
   const removed = installerAs(home, ['uninstall']);
   assert.equal(removed.code, 0, removed.out);
-  assert.ok(!existsSync(join(home, '.protocol-chaos', 'runtime', JSON.parse(read(join(ROOT, 'package.json'))).version)), 'uninstall removes the copy');
+  assert.ok(!existsSync(join(home, '.protocol-chaos', 'runtime')), 'uninstall removes the copy, and its folder');
+  assert.deepEqual(readdirSync(join(home, '.protocol-chaos')), [], 'nothing of init is left; the repository was never written');
 });
 
 test('an agent already connected to a server elsewhere is left alone, and --yes will not split the repository', () => {
