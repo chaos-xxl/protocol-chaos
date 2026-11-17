@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import jsonc from 'jsonc-parser';
 import { IMPORT_STATIC, instructions } from '../instructions.mjs';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -404,10 +405,18 @@ test('Kiro and Cursor: settings edited since are kept, an entry elsewhere is lef
   assert.match(refused.out, /would not share it/, 'connecting Cursor to a second repository needs a choice');
 
   writeFileSync(join(home, '.kiro', 'settings', 'mcp.json'), '{"mcpServers": {}}');
+  const commented = installer(home, 'init', '--yes', '--only', 'cursor');
+  assert.equal(commented.code, 0, commented.out);
+  assert.ok(read(settings).startsWith('{\n  // my servers\n  "mcpServers": {'), 'the comment stays');
+  assert.equal(jsonc.parse(read(settings)).mcpServers.protocol_chaos.args[1], 'cursor');
+  assert.equal(installer(home, 'uninstall', '--only', 'cursor').code, 0);
+  assert.equal(read(settings), '{\n  // my servers\n  "mcpServers": {}\n}\n', 'and the file is as it was');
+
+  writeFileSync(settings, '{\n  "mcpServers": {\n');
   const unreadable = installer(home, 'init', '--yes', '--only', 'cursor');
   assert.equal(unreadable.code, 1, unreadable.out);
-  assert.match(unreadable.out, /is not plain JSON \(it may hold comments\)/);
-  assert.equal(read(settings), '{\n  // my servers\n  "mcpServers": {}\n}\n');
+  assert.match(unreadable.out, /Cursor: not connected\. \S+mcp\.json cannot be read as JSON/);
+  assert.equal(read(settings), '{\n  "mcpServers": {\n');
 });
 
 test('init shows what an import of other assistants\' memories would read and cost; with --yes it leaves the offer to the assistants', () => {
@@ -430,4 +439,149 @@ test('init shows what an import of other assistants\' memories would read and co
   const declined = installer(home, 'init', '--yes', '--no-import', '--only', 'codex');
   assert.equal(declined.code, 0, declined.out);
   assert.equal(JSON.parse(read(join(home, '.protocol-chaos', 'import', 'state.json'))).status, 'declined', '--no-import takes back a pending offer');
+});
+
+// Where Claude Desktop and VS Code keep their settings, in a home folder, on this platform.
+const appData = (home) => (process.platform === 'darwin' ? join(home, 'Library', 'Application Support') : join(home, '.config'));
+const OPENCODE_SETTINGS = '{\n  "$schema": "https://opencode.ai/config.json",\n  // my servers\n  "mcp": {\n    "figma": { "type": "remote", "url": "http://127.0.0.1:3845/mcp" },\n  },\n}\n';
+const DESKTOP_SETTINGS = '{\n  "preferences": {\n    "sidebarMode": "chat"\n  },\n  "coworkUserFilesPath": "/tmp/cowork"\n}';
+const VSCODE_SETTINGS = '{\n\t"servers": {\n\t\t"other": {\n\t\t\t"type": "stdio",\n\t\t\t"command": "other"\n\t\t}\n\t},\n\t"inputs": []\n}';
+const PI_NOTES = '# My Pi notes\n\nKeep answers short.\n';
+
+test('OpenCode, Claude Desktop, GitHub Copilot and Pi get their entries, comments kept, and the instructions where each model reads them; uninstall puts every file back', () => {
+  const home = freshHome();
+  const launcher = join(home, '.protocol-chaos', 'bin', 'protocol-chaos');
+  mkdirSync(join(home, '.local', 'share', 'opencode'), { recursive: true });
+  mkdirSync(join(home, '.config', 'opencode'), { recursive: true });
+  const opencodeFile = join(home, '.config', 'opencode', 'opencode.jsonc');
+  writeFileSync(opencodeFile, OPENCODE_SETTINGS);
+  const desktopFile = join(appData(home), 'Claude', 'claude_desktop_config.json');
+  mkdirSync(dirname(desktopFile), { recursive: true });
+  writeFileSync(desktopFile, DESKTOP_SETTINGS, { mode: 0o600 });
+  mkdirSync(join(home, '.copilot'));
+  writeFileSync(join(home, '.copilot', 'config.json'), '{}\n');
+  const vscodeFile = join(appData(home), 'Code', 'User', 'mcp.json');
+  mkdirSync(dirname(vscodeFile), { recursive: true });
+  writeFileSync(vscodeFile, VSCODE_SETTINGS);
+  mkdirSync(join(home, '.pi', 'agent'), { recursive: true });
+  writeFileSync(join(home, '.pi', 'agent', 'settings.json'), '{}\n');
+  writeFileSync(join(home, '.pi', 'agent', 'CLAUDE.md'), PI_NOTES);
+
+  const first = installer(home, 'init', '--yes', '--only', 'opencode,claude-desktop,copilot,pi');
+  assert.equal(first.code, 0, first.out);
+  assert.match(first.out, /Connected: OpenCode, Claude Desktop, GitHub Copilot, Pi/);
+  assert.match(first.out, /If they are open, start them again so they load the server\. OpenCode: .*\. Claude Desktop: quit it completely and open it again\./);
+
+  const opencode = read(opencodeFile);
+  assert.ok(opencode.includes('// my servers'), 'OpenCode: the comment stays');
+  const opencodeValue = jsonc.parse(opencode);
+  assert.deepEqual(opencodeValue.mcp.protocol_chaos, { type: 'local', command: [launcher, '--client', 'opencode', '--tools', 'writer'], enabled: true });
+  assert.deepEqual(opencodeValue.mcp.figma, { type: 'remote', url: 'http://127.0.0.1:3845/mcp' });
+  assert.ok(!existsSync(join(home, '.config', 'opencode', 'AGENTS.md')), 'OpenCode shows the server\'s instructions: no AGENTS.md');
+
+  const desktop = JSON.parse(read(desktopFile));
+  assert.deepEqual(desktop.mcpServers.protocol_chaos, { command: launcher, args: ['--client', 'claude-desktop', '--tools', 'writer', '--instructions-in-tools'] });
+  assert.deepEqual(desktop.preferences, { sidebarMode: 'chat' }, 'the app\'s own keys stay');
+  assert.equal(statSync(desktopFile).mode & 0o777, 0o600);
+
+  assert.deepEqual(JSON.parse(read(join(home, '.copilot', 'mcp-config.json'))).mcpServers.protocol_chaos,
+    { type: 'local', command: launcher, args: ['--client', 'copilot', '--tools', 'writer'], tools: ['*'] });
+  assert.ok(read(join(home, '.copilot', 'copilot-instructions.md')).includes(`${instructions('copilot')}\n\n${IMPORT_STATIC}`));
+  const vscode = read(vscodeFile);
+  assert.match(vscode, /^\t\t"protocol_chaos": \{$/m, 'VS Code\'s tabs are kept');
+  assert.deepEqual(jsonc.parse(vscode).servers.protocol_chaos, { type: 'stdio', command: launcher, args: ['--client', 'copilot', '--tools', 'writer'] });
+  assert.ok(jsonc.parse(vscode).servers.other);
+
+  assert.deepEqual(JSON.parse(read(join(home, '.pi', 'agent', 'mcp.json'))).mcpServers.protocol_chaos,
+    { command: launcher, args: ['--client', 'pi', '--tools', 'writer'], exposure: 'direct' });
+  const notes = read(join(home, '.pi', 'agent', 'CLAUDE.md'));
+  assert.ok(notes.startsWith(PI_NOTES) && notes.includes(instructions('pi')), 'the block goes into the context file Pi reads, after the user\'s notes');
+  assert.ok(!existsSync(join(home, '.pi', 'agent', 'AGENTS.md')), 'no AGENTS.md, which would hide CLAUDE.md from Pi');
+
+  const doctor = installer(home, 'doctor');
+  assert.equal(doctor.code, 0, doctor.out);
+  for (const name of ['OpenCode', 'Claude Desktop', 'GitHub Copilot', 'Pi']) assert.match(doctor.out, new RegExp(`ok {3}${name}: protocol_chaos runs the launcher`));
+
+  const removed = installer(home, 'uninstall');
+  assert.equal(removed.code, 0, removed.out);
+  assert.equal(read(opencodeFile), OPENCODE_SETTINGS);
+  assert.equal(read(desktopFile), DESKTOP_SETTINGS);
+  assert.equal(read(vscodeFile), VSCODE_SETTINGS);
+  assert.equal(read(join(home, '.pi', 'agent', 'CLAUDE.md')), PI_NOTES);
+  for (const file of [join(home, '.copilot', 'mcp-config.json'), join(home, '.copilot', 'copilot-instructions.md'), join(home, '.pi', 'agent', 'mcp.json')]) {
+    assert.ok(!existsSync(file), `${file} was created by init and is gone`);
+  }
+  assert.deepEqual(readdirSync(join(home, '.copilot')), ['config.json']);
+});
+
+// A stand-in for the openclaw command: keeps mcp.servers in openclaw.json as the real one does, and logs how it was called.
+const FAKE_OPENCLAW = `#!/usr/bin/env node
+const { existsSync, readFileSync, writeFileSync, appendFileSync } = require('node:fs');
+const { join } = require('node:path');
+const args = process.argv.slice(2);
+appendFileSync(join(process.env.HOME, 'openclaw-calls.log'), JSON.stringify(args) + '\\n');
+const file = join(process.env.HOME, '.openclaw', 'openclaw.json');
+const config = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+config.mcp ??= {}; config.mcp.servers ??= {};
+if (args[0] === 'mcp' && args[1] === 'set') config.mcp.servers[args[2]] = JSON.parse(args[3]);
+else if (args[0] === 'mcp' && args[1] === 'unset') { if (!config.mcp.servers[args[2]]) process.exit(1); delete config.mcp.servers[args[2]]; }
+else process.exit(2);
+writeFileSync(file, JSON.stringify(config, null, 2));
+`;
+
+test('OpenClaw: openclaw mcp set, and the instructions in the AGENTS.md of the workspace its settings name; uninstall runs openclaw mcp unset', () => {
+  const home = freshHome();
+  writeFileSync(join(home, 'bin', 'openclaw'), FAKE_OPENCLAW);
+  chmodSync(join(home, 'bin', 'openclaw'), 0o755);
+  mkdirSync(join(home, '.openclaw'));
+  writeFileSync(join(home, '.openclaw', 'openclaw.json'), JSON.stringify({ meta: { lastTouchedVersion: '2026.11.4' }, agents: { defaults: { workspace: '~/claw' } } }, null, 2));
+  mkdirSync(join(home, 'claw'));
+  const rules = '# Agent rules\n\nBe kind.\n';
+  writeFileSync(join(home, 'claw', 'AGENTS.md'), rules);
+  const launcher = join(home, '.protocol-chaos', 'bin', 'protocol-chaos');
+
+  const result = installer(home, 'init', '--yes', '--only', 'openclaw');
+  assert.equal(result.code, 0, result.out);
+  const calls = read(join(home, 'openclaw-calls.log')).trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(calls[0], ['mcp', 'set', 'protocol_chaos', JSON.stringify({ command: launcher, args: ['--client', 'openclaw', '--tools', 'writer'] })]);
+  const agents = read(join(home, 'claw', 'AGENTS.md'));
+  assert.ok(agents.startsWith(`${rules}\n<!-- protocol-chaos:begin`) && agents.includes(`${instructions('openclaw')}\n\n${IMPORT_STATIC}`));
+  const doctor = installer(home, 'doctor');
+  assert.match(doctor.out, /ok {3}OpenClaw: protocol_chaos runs the launcher/, doctor.out);
+
+  const removed = installer(home, 'uninstall');
+  assert.equal(removed.code, 0, removed.out);
+  assert.deepEqual(read(join(home, 'openclaw-calls.log')).trim().split('\n').map((line) => JSON.parse(line)).at(-1), ['mcp', 'unset', 'protocol_chaos']);
+  assert.equal(read(join(home, 'claw', 'AGENTS.md')), rules);
+});
+
+test('Pi older than 0.99, which has no MCP, is left out with the reason, and the other agents still connect', () => {
+  const home = freshHome();
+  const pkg = join(home, 'lib', 'node_modules', '@earendil-works', 'pi-coding-agent');
+  mkdirSync(pkg, { recursive: true });
+  writeFileSync(join(pkg, 'cli.js'), '#!/bin/sh\necho 0.73.1\n');
+  chmodSync(join(pkg, 'cli.js'), 0o755);
+  symlinkSync(join(pkg, 'cli.js'), join(home, 'bin', 'pi'));
+  const result = installer(home, 'init', '--yes', '--only', 'pi,codex');
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /Pi: not connected\. Pi 0\.73\.1 has no MCP support; Pi 0\.99 and later have/);
+  assert.match(result.out, /Connected: Codex\./);
+  assert.ok(!existsSync(join(home, '.pi', 'agent', 'mcp.json')));
+});
+
+test('--instructions-in-tools opens the description of context_pack with the server\'s instructions', () => {
+  const home = freshHome();
+  const messages = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+  ].map((message) => JSON.stringify(message)).join('\n');
+  const list = (...flags) => {
+    const result = spawnSync(process.execPath, [SERVER, '--data', join(home, 'data'), '--client', 'claude-desktop', '--tools', 'writer', ...flags], { input: `${messages}\n`, encoding: 'utf8', env: { HOME: home, PATH: '/usr/bin:/bin' }, timeout: 15_000 });
+    return JSON.parse(result.stdout.trim().split('\n')[1]).result.tools;
+  };
+  const plain = list().find((tool) => tool.name === 'context_pack').description;
+  const described = list('--instructions-in-tools').find((tool) => tool.name === 'context_pack').description;
+  assert.ok(described.includes(instructions('claude-desktop')) && described.endsWith(plain));
+  assert.ok(!plain.includes('RECORD AFTER'));
 });

@@ -2,6 +2,18 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
+## Unreleased
+
+- **`init` connects OpenCode, OpenClaw, Claude Desktop, GitHub Copilot and Pi.**
+  - OpenCode: an entry in its global settings (`opencode.jsonc` or `opencode.json`), in the shape OpenCode 1.x and 2.x both read; OpenCode shows the server's instructions itself.
+  - OpenClaw: `openclaw mcp set`, and the instructions in the workspace's `AGENTS.md`, since MCP tools sit behind OpenClaw's tool search; `uninstall` runs `openclaw mcp unset`.
+  - Claude Desktop: an entry in `claude_desktop_config.json`, written only while the app is closed, because it writes its whole settings file back when it saves a setting. Its chat shows the model neither a server's instructions nor a local file of them, so the server runs with the new `--instructions-in-tools`, which puts the instructions at the start of the description of `context_pack`.
+  - GitHub Copilot: an entry in `~/.copilot/mcp-config.json`, read by Copilot CLI and VS Code's Copilot agent, with the instructions in `~/.copilot/copilot-instructions.md`, and one in VS Code's user `mcp.json` for its local chat.
+  - Pi (0.99 and later): an entry in `~/.pi/agent/mcp.json` with the tools declared to the model, and the instructions in the context file Pi reads; an older Pi is left out with the reason.
+- **JSON settings files keep their comments.** `init` reads and edits them with `jsonc-parser`, so a file with comments or trailing commas (common in OpenCode and VS Code) is no longer refused; only a file that cannot be read as JSON is. This adds `jsonc-parser` as a dependency.
+- **One agent `init` cannot add to no longer stops the others**: it is left out, with the reason, and the rest are connected.
+- The import also reads OpenCode's global `AGENTS.md`, OpenClaw's `MEMORY.md`, `USER.md` and newest 30 daily notes, Copilot's `copilot-instructions.md` and the memories of VS Code's Copilot chat, and Pi's context file.
+
 ## protocol-chaos 0.2.5 (2026-11-18)
 
 - **`init` connects Kiro and Cursor.** Kiro gets a `protocol_chaos` entry in `~/.kiro/settings/mcp.json` (the IDE and Kiro CLI share it) and, since it does not show a server's instructions to its model, a global steering file with them, included in every conversation. Cursor gets an entry in `~/.cursor/mcp.json` and the instructions as a skill, `~/.cursor/skills/protocol-chaos/SKILL.md`, whose description carries the main rule. The JSON files keep their indentation and everything else in them; `uninstall` puts them back byte for byte, or, when they were edited since, takes out only the entry. A settings file that is not plain JSON is refused. Neither can organize in the background yet.

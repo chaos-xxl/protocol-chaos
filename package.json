@@ -48,6 +48,7 @@
     "prepublishOnly": "npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "jsonc-parser": "3.3.1"
   }
 }

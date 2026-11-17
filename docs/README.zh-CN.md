@@ -29,7 +29,7 @@ flowchart LR
 
 ## 快速开始
 
-需要 Node.js 20 或更高版本，macOS 或 Linux。一条命令找出这台电脑上的 Claude Code、Codex、DeepSeek Harness、Hermes、Kiro 和 Cursor，把你选的接到同一个库上：
+需要 Node.js 20 或更高版本，macOS 或 Linux。一条命令找出这台电脑上的 Claude Code、Codex、DeepSeek Harness、Hermes、Kiro、Cursor、OpenCode、OpenClaw、Claude Desktop、GitHub Copilot（VS Code 和 Copilot CLI）和 Pi，把你选的接到同一个库上：
 
 ```sh
 npx protocol-chaos init
@@ -127,7 +127,7 @@ npx protocol-chaos init
 接下来：
 
 - [Hermes 插件](../integrations/hermes/protocol-chaos/README.md)在日常用过一段时间后，提交到 Hermes 的插件目录。
-- `init` 接更多的 Agent，每次几家，先从 OpenCode、OpenClaw、Claude Desktop、GitHub Copilot 和 Pi 开始。欢迎为其他 Agent 提 PR：每个 Agent 就是 [server/install.mjs](../server/install.mjs) 里的一个对象。
+- `init` 接更多的 Agent，每次几家：下一批是 Antigravity、Devin Desktop 和 Devin CLI、Cline、Kilo Code、Gemini CLI。欢迎为其他 Agent 提 PR：每个 Agent 就是 [server/install.mjs](../server/install.mjs) 里的一个对象。
 - 按客户端分别授权：每个助手能读到什么（§13）。
 - 跨应用认出同一个人（§13）。
 - draft 0.3，从大家反馈的案例出发。

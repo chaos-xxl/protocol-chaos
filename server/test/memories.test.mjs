@@ -273,3 +273,29 @@ test('protocol-chaos import: without an organizer it leaves the import to a conv
   assert.match(run('--undo').stdout, /nothing to undo/);
   assert.equal(run('--only', 'nobody').status, 2);
 });
+
+test('the notes of OpenCode, OpenClaw, GitHub Copilot and Pi are read too; OpenClaw only its newest daily notes, Copilot without the block init wrote', () => {
+  const home = mkdtempSync(join(tmpdir(), 'protocol-chaos-memories-'));
+  homes.push(home);
+  const env = { HOME: home, PATH: '/usr/bin:/bin' };
+  put(join(home, '.config', 'opencode', 'AGENTS.md'), 'Sam is learning Rust this winter.\n');
+  put(join(home, '.openclaw', 'openclaw.json'), '{\n  // where the agent lives\n  "agents": { "defaults": { "workspace": "~/claw" } },\n}\n');
+  put(join(home, 'claw', 'MEMORY.md'), 'Sam is saving for a camera.\n');
+  put(join(home, 'claw', 'USER.md'), '- Prefer short answers.\n');
+  for (let day = 1; day <= 32; day += 1) put(join(home, 'claw', 'memory', `2026-10-${String(day).padStart(2, '0')}.md`), `Note of day ${day}.\n`);
+  put(join(home, '.copilot', 'copilot-instructions.md'), 'Sam plans to move in December.\n\n<!-- protocol-chaos:begin (added by init) -->\nUse the protocol_chaos server.\n<!-- protocol-chaos:end -->\n');
+  const vscodeUser = process.platform === 'darwin' ? join(home, 'Library', 'Application Support', 'Code', 'User') : join(home, '.config', 'Code', 'User');
+  put(join(vscodeUser, 'globalStorage', 'github.copilot-chat', 'memory-tool', 'memories', 'preferences.md'), 'Sam is training for a half marathon in March.\n');
+  put(join(home, '.pi', 'agent', 'CLAUDE.md'), 'Sam is rebuilding the home server.\n');
+
+  const { files, skipped } = findSources(env);
+  const vias = files.map((file) => file.via);
+  for (const via of ['OpenCode: AGENTS.md', 'OpenClaw memory: MEMORY.md', 'OpenClaw: USER.md', 'GitHub Copilot: copilot-instructions.md', 'VS Code Copilot memory: preferences.md', 'Pi: CLAUDE.md']) {
+    assert.ok(vias.includes(via), `${via} is read`);
+  }
+  const daily = vias.filter((via) => via.startsWith('OpenClaw daily note:'));
+  assert.equal(daily.length, 30);
+  assert.ok(daily.includes('OpenClaw daily note: 2026-10-32.md') && !daily.includes('OpenClaw daily note: 2026-10-01.md'), 'the newest');
+  assert.match(skipped.find((file) => file.via === 'OpenClaw daily notes').why, /^2 older daily notes; the newest 30 are read$/);
+  assert.equal(files.find((file) => file.agent === 'copilot' && file.via.startsWith('GitHub')).text, 'Sam plans to move in December.');
+});

@@ -20,26 +20,31 @@
 // matter in the background with one headless call to that agent's model (organize.mjs), and a
 // daily sweep at 04:00 folds what was missed; it calls no model when nothing was recorded.
 //
-// Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, kiro, cursor. Hermes reaches the
+// Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, kiro, cursor, opencode, openclaw,
+// claude-desktop, copilot (GitHub Copilot in VS Code and Copilot CLI), pi. Hermes reaches the
 // server over HTTP, so for it init also runs `launcher --http 127.0.0.1:<port>` at login, issues
 // it a token, writes both into Hermes's .env, adds the protocol_chaos MCP server and installs the
-// plugin. Kiro gets an entry in ~/.kiro/settings/mcp.json and a global steering file; Cursor an
-// entry in ~/.cursor/mcp.json and a skill. An agent that already has an MCP server named
-// protocol_chaos is left as it is. Where each agent keeps its settings follows its own
-// variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME, HERMES_HOME.
+// plugin. The others get an MCP entry in their settings and, where their model does not see the
+// server's instructions, the instructions where they keep standing ones (each agent's comment
+// below says where). JSON settings files keep their comments. An agent that already has an MCP
+// server named protocol_chaos is left as it is. Where each agent keeps its settings follows its
+// own variables: CLAUDE_CONFIG_DIR, CODEX_HOME, DSH_HOME, HERMES_HOME, XDG_CONFIG_HOME,
+// XDG_DATA_HOME, OPENCLAW_STATE_DIR, OPENCLAW_CONFIG_PATH, OPENCLAW_WORKSPACE_DIR,
+// CLAUDE_USER_DATA_DIR, COPILOT_HOME, PI_CODING_AGENT_DIR.
 //
 // Import: the memories other assistants keep on this machine (memories.mjs) can be imported
 // once. init shows what would be read and what it would cost and asks; with --yes, or without
 // a terminal, the assistants offer it in their next conversation instead.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { accessSync, chmodSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, userInfo } from 'node:os';
 import { basename, delimiter, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
+import jsonc from 'jsonc-parser';
 import { Clients } from './clients.mjs';
 import { IMPORT_STATIC, instructions } from './instructions.mjs';
 import { declineImport, describePlan, pendImport, planImport, readImport, startImport } from './memories.mjs';
@@ -57,7 +62,8 @@ const HELP = `Usage:
   protocol-chaos uninstall [--only <agents>] [--dry-run] [--data <directory>]
   protocol-chaos doctor [--data <directory>]
 
-Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, kiro, cursor, comma-separated for --only.
+Agents: claude-code, codex, dsh (DeepSeek Harness), hermes, kiro, cursor, opencode, openclaw,
+claude-desktop, copilot (GitHub Copilot: VS Code and Copilot CLI), pi; comma-separated for --only.
 --yes      connect every agent found, without asking; the import of other assistants' memories
            is then offered by the assistants, not started
 --organizer  the agent whose model organizes in the background: dsh, claude-code, codex, or none
@@ -241,37 +247,76 @@ function removeFile(change) {
   return `removed ${change.file}`;
 }
 
-/**
- * The JSON settings file of an agent that keeps its MCP servers under "mcpServers" (Kiro,
- * Cursor), checked before anything is changed: init adds to plain JSON objects only.
- */
-function checkJsonSettings(file) {
-  if (!existsSync(file)) return;
-  const text = readFileSync(file, 'utf8');
-  let config;
-  try {
-    config = text.trim() ? JSON.parse(text) : {};
-  } catch {
-    throw new InstallError(`${file} is not plain JSON (it may hold comments), so init cannot add to it. Add the entry from server/README.md by hand.`);
+// JSON settings files (Kiro, Cursor, OpenCode, Claude Desktop, Copilot, Pi, VS Code) may hold
+// comments and trailing commas: they are read and edited with jsonc-parser, which keeps both,
+// and every other key, as they are.
+const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+/** The value at a path of keys, or undefined. */
+const at = (value, path) => path.reduce((node, key) => (plainObject(node) ? node[key] : undefined), value);
+
+/** A JSON settings file: { text, value }, with {} for a file that is missing or empty. Throws when it cannot be read. */
+function readSettings(file) {
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  if (!text.trim()) return { text, value: {} };
+  const errors = [];
+  const value = jsonc.parse(text, errors, { allowTrailingComma: true });
+  if (errors.length || !plainObject(value)) {
+    const where = errors.length ? ` (${jsonc.printParseErrorCode(errors[0].error)} at character ${errors[0].offset})` : '';
+    throw new InstallError(`${file} cannot be read as JSON${where}, so init leaves it alone. Add the entry from server/README.md by hand.`);
   }
-  const plain = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-  if (!plain(config) || (config.mcpServers !== undefined && !plain(config.mcpServers))) {
-    throw new InstallError(`${file} does not hold an "mcpServers" object init can add to. Add the entry from server/README.md by hand.`);
+  return { text, value };
+}
+
+/** A settings file's value for a look, or undefined when it cannot be read. */
+function peekSettings(file) {
+  try {
+    return readSettings(file).value;
+  } catch {
+    return undefined;
   }
 }
 
-/** Adds the protocol_chaos entry to mcpServers, keeping the file's indentation; returns the change. */
-function addJsonEntry(ctx, file, entry) {
+/** Throws when a key on the way to `path` holds something other than an object, which init would have to replace. */
+function checkSettingsPath(file, value, path) {
+  let node = value;
+  for (let depth = 0; depth < path.length - 1; depth += 1) {
+    node = node[path[depth]];
+    if (node === undefined) return;
+    if (!plainObject(node)) throw new InstallError(`${file}: "${path.slice(0, depth + 1).join('.')}" is not an object init can add to. Add the entry from server/README.md by hand.`);
+  }
+}
+
+/** The text with one value set (or, for undefined, removed) at a path, with the file's own indentation. */
+function setJsonValue(text, path, value) {
+  const indent = /^([ \t]+)\S/m.exec(text)?.[1];
+  const formattingOptions = {
+    insertSpaces: !indent?.includes('\t'),
+    tabSize: indent && !indent.includes('\t') ? indent.length : 2,
+    eol: text.includes('\r\n') ? '\r\n' : '\n',
+  };
+  return jsonc.applyEdits(text, jsonc.modify(text, path, value, { formattingOptions }));
+}
+
+/**
+ * Sets the protocol_chaos entry at `path` in a JSON settings file, creating the file (from
+ * `initial`) when it is missing; returns the change.
+ */
+function addJsonEntry(ctx, file, path, entry, { initial = {}, mode = 0o600 } = {}) {
   const existed = existsSync(file);
-  const original = existed ? readFileSync(file, 'utf8') : '';
-  const config = original.trim() ? JSON.parse(original) : {};
-  config.mcpServers = { ...(config.mcpServers ?? {}), [SERVER_NAME]: entry };
-  const indent = /^([ \t]+)"/m.exec(original)?.[1] ?? 2;
-  const text = `${JSON.stringify(config, null, indent)}\n`;
+  const { text, value } = readSettings(file);
+  checkSettingsPath(file, value, path);
+  const next = setJsonValue(text.trim() ? text : `${JSON.stringify(initial, null, 2)}\n`, path, entry);
   const folders = existed ? [] : missingFolders(file);
   const saved = existed ? backup(ctx, file) : undefined;
-  writeAtomic(file, text, existed ? modeOf(file) : 0o600);
-  return { kind: 'json', file, created: !existed, backup: saved, writtenSha256: sha256(text), folders };
+  writeAtomic(file, next, existed ? modeOf(file) : mode);
+  return { kind: 'json', file, path, initial, created: !existed, backup: saved, writtenSha256: sha256(next), folders };
+}
+
+/** Whether a settings value holds nothing but what init created the file with, and empty objects. */
+function emptyish(value, initial = {}) {
+  return plainObject(value) && Object.entries(value).every(([key, item]) => (Object.hasOwn(initial, key) && JSON.stringify(item) === JSON.stringify(initial[key]))
+    || (plainObject(item) && emptyish(item)));
 }
 
 /** Takes the entry back out: the file as it was when nobody changed it since, otherwise only the entry. */
@@ -293,20 +338,22 @@ function removeJsonEntry(change) {
       return `put ${change.file} back as it was`;
     }
   }
-  let config;
+  // Recorded by 0.2.5, before changes kept their path: the entry under mcpServers.
+  const path = change.path ?? ['mcpServers', SERVER_NAME];
+  let value;
   try {
-    config = JSON.parse(current);
+    ({ value } = readSettings(change.file));
   } catch {
-    return `${change.file} is no longer plain JSON; remove its ${SERVER_NAME} entry by hand`;
+    return `${change.file} can no longer be read as JSON; remove its ${SERVER_NAME} entry by hand`;
   }
-  if (!config?.mcpServers?.[SERVER_NAME]) return `no ${SERVER_NAME} entry left in ${change.file}; nothing to remove`;
-  delete config.mcpServers[SERVER_NAME];
-  if (change.created && Object.keys(config).length === 1 && !Object.keys(config.mcpServers).length) {
+  if (at(value, path) === undefined) return `no ${SERVER_NAME} entry left in ${change.file}; nothing to remove`;
+  const next = setJsonValue(current, path, undefined);
+  if (change.created && emptyish(jsonc.parse(next, [], { allowTrailingComma: true }), change.initial)) {
     rmSync(change.file);
     removeEmptyFolders(change.folders);
     return `removed ${change.file} (it was created by init)`;
   }
-  writeAtomic(change.file, `${JSON.stringify(config, null, /^([ \t]+)"/m.exec(current)?.[1] ?? 2)}\n`, modeOf(change.file));
+  writeAtomic(change.file, next, modeOf(change.file));
   return `removed the ${SERVER_NAME} entry from ${change.file}`;
 }
 
@@ -387,7 +434,11 @@ function readJson(file) {
   }
 }
 
-const describeEntry = (entry) => (entry?.url ? `the server at ${entry.url}` : entry?.command ? `\`${[entry.command, ...(entry.args ?? [])].join(' ')}\`` : 'an entry');
+const describeEntry = (entry) => {
+  if (entry?.url) return `the server at ${entry.url}`;
+  if (!entry?.command) return 'an entry';
+  return `\`${(Array.isArray(entry.command) ? entry.command : [entry.command, ...(entry.args ?? [])]).join(' ')}\``;
+};
 
 const claudeCode = {
   id: 'claude-code',
@@ -463,19 +514,7 @@ const codex = {
     }];
     // Codex shows a server's instructions to its model only as the description of the
     // server's tools (openai/codex#29097), so the rules also go where it keeps standing ones.
-    const agents = join(home, 'AGENTS.md');
-    if (existsSync(agents) && readFileSync(agents, 'utf8').includes(SERVER_NAME)) {
-      steps.push({ say: `leave ${agents} as it is: it already mentions ${SERVER_NAME}`, apply: () => undefined });
-    } else {
-      const block = [
-        `<!-- protocol-chaos:begin (${NOTE}) -->`,
-        `## Protocol Chaos (MCP server \`${SERVER_NAME}\`)`,
-        '',
-        standingInstructions(this.id),
-        '<!-- protocol-chaos:end -->',
-      ].join('\n');
-      steps.push({ say: `add the server's instructions to ${agents}`, apply: () => addBlock(ctx, agents, block) });
-    }
+    steps.push(standingBlockStep(ctx, this.id, join(home, 'AGENTS.md')));
     return steps;
   },
   verify(ctx) {
@@ -684,18 +723,41 @@ const hermes = {
   },
 };
 
-/** The protocol_chaos entry of an agent's JSON settings file, as `existing` reports it. */
-function jsonEntry(file) {
-  const entry = readJson(file)?.mcpServers?.[SERVER_NAME];
+const MCP_SERVERS = ['mcpServers', SERVER_NAME];
+
+/** The protocol_chaos entry at `path` of an agent's JSON settings file, as `existing` reports it. */
+function jsonEntry(file, path = MCP_SERVERS) {
+  const entry = at(peekSettings(file), path);
   return entry ? { text: describeEntry(entry), url: entry.url } : undefined;
 }
 
-function verifyJson(ctx, file) {
-  const entry = readJson(file)?.mcpServers?.[SERVER_NAME];
+/** Whether an entry runs the launcher: its command, or the first word of a command list (OpenCode). */
+const runsLauncher = (ctx, entry) => (Array.isArray(entry?.command) ? entry.command[0] : entry?.command) === ctx.launcher;
+
+function verifyJson(ctx, file, path = MCP_SERVERS) {
+  const entry = at(peekSettings(file), path);
   if (!entry) return { ok: false, text: `no ${SERVER_NAME} server in ${file}` };
-  return entry.command === ctx.launcher
+  return runsLauncher(ctx, entry)
     ? { ok: true, text: `${SERVER_NAME} runs the launcher (${file})` }
     : { ok: false, text: `${SERVER_NAME} in ${file} runs ${describeEntry(entry)}, not the launcher` };
+}
+
+/**
+ * The step that adds the server's instructions as a marked block to a file of standing
+ * instructions, unless that file already mentions the server.
+ */
+function standingBlockStep(ctx, client, file) {
+  if (existsSync(file) && readFileSync(file, 'utf8').includes(SERVER_NAME)) {
+    return { say: `leave ${file} as it is: it already mentions ${SERVER_NAME}`, apply: () => undefined };
+  }
+  const block = [
+    `<!-- protocol-chaos:begin (${NOTE}) -->`,
+    `## Protocol Chaos (MCP server \`${SERVER_NAME}\`)`,
+    '',
+    standingInstructions(client),
+    '<!-- protocol-chaos:end -->',
+  ].join('\n');
+  return { say: `add the server's instructions to ${file}`, apply: () => addBlock(ctx, file, block) };
 }
 
 /** The Markdown files in a folder that already mention protocol_chaos, if any. */
@@ -736,10 +798,10 @@ const kiro = {
   },
   plan(ctx) {
     const settings = join(kiroHome(ctx), 'settings', 'mcp.json');
-    checkJsonSettings(settings);
+    readSettings(settings);
     const steps = [{
       say: `add ${SERVER_NAME} to mcpServers in ${settings}`,
-      apply: () => addJsonEntry(ctx, settings, { command: ctx.launcher, args: serverArgs(this.id) }),
+      apply: () => addJsonEntry(ctx, settings, MCP_SERVERS, { command: ctx.launcher, args: serverArgs(this.id) }),
     }];
     const steering = join(kiroHome(ctx), 'steering', 'protocol-chaos.md');
     const mentions = mentioning(dirname(steering));
@@ -775,10 +837,10 @@ const cursor = {
   },
   plan(ctx) {
     const settings = join(cursorHome(ctx), 'mcp.json');
-    checkJsonSettings(settings);
+    readSettings(settings);
     const steps = [{
       say: `add ${SERVER_NAME} to mcpServers in ${settings}`,
-      apply: () => addJsonEntry(ctx, settings, { command: ctx.launcher, args: serverArgs(this.id) }),
+      apply: () => addJsonEntry(ctx, settings, MCP_SERVERS, { command: ctx.launcher, args: serverArgs(this.id) }),
     }];
     const skill = join(cursorHome(ctx), 'skills', 'protocol-chaos', 'SKILL.md');
     const mentions = mentioning(join(cursorHome(ctx), 'skills'));
@@ -798,7 +860,319 @@ const cursor = {
   },
 };
 
-export const AGENTS = [claudeCode, codex, dsh, hermes, kiro, cursor];
+// ------------------------------------------------- OpenCode, OpenClaw, Claude Desktop, Copilot, Pi
+
+/** A folder named by an XDG variable, or its default under the home folder. */
+const xdg = (ctx, variable, fallback) => resolve(ctx.env[variable] || join(ctx.home, fallback));
+const expandHome = (ctx, path) => (path === '~' || path.startsWith('~/') ? join(ctx.home, path.slice(1)) : path);
+const holdsAny = (dir, names) => names.some((name) => existsSync(join(dir, name)));
+
+/** The version a command prints for --version, as [major, minor, patch], or undefined. */
+function versionOf(ctx, command) {
+  const result = spawnSync(command, ['--version'], { env: ctx.env, encoding: 'utf8', timeout: 10_000 });
+  const match = /(\d+)\.(\d+)\.(\d+)/.exec(String(result.stdout ?? ''));
+  return result.status === 0 && match ? match.slice(1).map(Number) : undefined;
+}
+
+const older = (version, than) => Boolean(version) && (version[0] - than[0] || version[1] - than[1] || version[2] - than[2]) < 0;
+
+/** The real file a command on PATH is, following links (npm puts links to packages on PATH). */
+function realCommand(command) {
+  try {
+    return realpathSync(command);
+  } catch {
+    return command;
+  }
+}
+
+const opencodeConfigDir = (ctx) => join(xdg(ctx, 'XDG_CONFIG_HOME', '.config'), 'opencode');
+const opencodeDataDir = (ctx) => join(xdg(ctx, 'XDG_DATA_HOME', join('.local', 'share')), 'opencode');
+// Global settings files, the last winning: opencode.jsonc over opencode.json (1.x also reads config.json first).
+const OPENCODE_FILES = ['config.json', 'opencode.json', 'opencode.jsonc'];
+const OPENCODE_OWN = [...OPENCODE_FILES, 'tui.json', 'cli.json', 'service.json'];
+
+/** The file init edits: opencode.jsonc when there is one, otherwise opencode.json. */
+function opencodeSettings(ctx) {
+  const jsoncFile = join(opencodeConfigDir(ctx), 'opencode.jsonc');
+  return existsSync(jsoncFile) ? jsoncFile : join(opencodeConfigDir(ctx), 'opencode.json');
+}
+
+/** OpenCode 2's own shape keeps servers under mcp.servers; the 1.x shape, which 2.x also reads, under mcp. */
+const opencodePath = (value) => (plainObject(at(value, ['mcp', 'servers'])) ? ['mcp', 'servers', SERVER_NAME] : ['mcp', SERVER_NAME]);
+
+function opencodeEntry(ctx) {
+  for (const name of [...OPENCODE_FILES].reverse()) {
+    const file = join(opencodeConfigDir(ctx), name);
+    const value = peekSettings(file);
+    const entry = at(value, ['mcp', 'servers', SERVER_NAME]) ?? at(value, ['mcp', SERVER_NAME]);
+    if (entry) return { file, entry };
+  }
+  return undefined;
+}
+
+// OpenCode shows a server's instructions to its model (1.17.10 and later, and every 2.x), so
+// only the MCP entry is written. OpenCode's own settings files often hold comments.
+const opencode = {
+  id: 'opencode',
+  name: 'OpenCode',
+  restart: 'OpenCode 1.x reads its settings when it starts',
+  find(ctx) {
+    for (const name of ['opencode', 'opencode2']) {
+      const command = which(ctx, name);
+      if (command) return { found: true, where: command };
+    }
+    for (const place of [join(ctx.home, '.opencode', 'bin', 'opencode'), opencodeDataDir(ctx)]) {
+      if (existsSync(place)) return { found: true, where: place };
+    }
+    const dir = opencodeConfigDir(ctx);
+    if (holdsAny(dir, OPENCODE_OWN)) return { found: true, where: dir };
+    if (existsSync(dir)) return { found: false, note: `${dir} holds none of OpenCode's own settings files` };
+    return { found: false };
+  },
+  existing(ctx) {
+    const found = opencodeEntry(ctx);
+    return found ? { text: describeEntry(found.entry), url: found.entry.url } : undefined;
+  },
+  plan(ctx) {
+    const file = opencodeSettings(ctx);
+    const path = opencodePath(readSettings(file).value);
+    const command = [ctx.launcher, ...serverArgs(this.id)];
+    const entry = path.length === 3 ? { type: 'local', command, disabled: false } : { type: 'local', command, enabled: true };
+    const steps = [{
+      say: `add ${SERVER_NAME} to ${path.slice(0, -1).join('.')} in ${file}`,
+      // 1.x adds $schema to a settings file that has none; a new file gets it from the start.
+      apply: () => addJsonEntry(ctx, file, path, entry, { initial: { $schema: 'https://opencode.ai/config.json' } }),
+    }];
+    const installed = which(ctx, 'opencode');
+    const current = installed ? versionOf(ctx, installed) : undefined;
+    if (current?.[0] === 1 && older(current, [1, 17, 10])) {
+      steps.push({ say: `note: OpenCode ${current.join('.')} does not show the server's instructions to its model; 1.17.10 and later do`, apply: () => undefined });
+    }
+    return steps;
+  },
+  verify(ctx) {
+    const found = opencodeEntry(ctx);
+    if (!found) return { ok: false, text: `no ${SERVER_NAME} server in ${opencodeSettings(ctx)}` };
+    return runsLauncher(ctx, found.entry)
+      ? { ok: true, text: `${SERVER_NAME} runs the launcher (${found.file})` }
+      : { ok: false, text: `${SERVER_NAME} in ${found.file} runs ${describeEntry(found.entry)}, not the launcher` };
+  },
+};
+
+const openclawState = (ctx) => resolve(expandHome(ctx, ctx.env.OPENCLAW_STATE_DIR || join(ctx.env.OPENCLAW_HOME || ctx.home, '.openclaw')));
+const openclawConfig = (ctx) => resolve(expandHome(ctx, ctx.env.OPENCLAW_CONFIG_PATH || join(openclawState(ctx), 'openclaw.json')));
+
+/** The default agent's workspace, whose AGENTS.md OpenClaw puts in every session's system prompt. */
+export function openclawWorkspace(ctx) {
+  if (ctx.env.OPENCLAW_WORKSPACE_DIR) return resolve(ctx.env.OPENCLAW_WORKSPACE_DIR);
+  const configured = at(peekSettings(openclawConfig(ctx)), ['agents', 'defaults', 'workspace']);
+  if (typeof configured === 'string' && configured.trim()) return resolve(expandHome(ctx, configured.trim()));
+  return join(openclawState(ctx), 'workspace');
+}
+
+// OpenClaw reads MCP servers from mcp.servers in openclaw.json (JSON5, reloaded while it runs);
+// its own command writes the entry, through the Gateway when one runs. Its tools sit behind
+// OpenClaw's tool search, so the server's instructions are not in the system prompt up front:
+// they go into the workspace's AGENTS.md, which is.
+const openclaw = {
+  id: 'openclaw',
+  name: 'OpenClaw',
+  find(ctx) {
+    const command = which(ctx, 'openclaw');
+    if (command) return { found: true, where: command };
+    if (existsSync(openclawConfig(ctx))) return { found: false, note: 'its settings are here, but the openclaw command is not on PATH' };
+    return { found: false };
+  },
+  existing(ctx) {
+    return jsonEntry(openclawConfig(ctx), ['mcp', 'servers', SERVER_NAME]);
+  },
+  plan(ctx) {
+    const command = which(ctx, 'openclaw') ?? 'openclaw';
+    // A file init cannot read might hold an entry `openclaw mcp set` would replace unseen.
+    readSettings(openclawConfig(ctx));
+    const entry = JSON.stringify({ command: ctx.launcher, args: serverArgs(this.id) });
+    return [
+      {
+        say: `openclaw mcp set ${SERVER_NAME} '${entry}'`,
+        apply: () => {
+          run(ctx, [command, 'mcp', 'set', SERVER_NAME, entry]);
+          return { kind: 'command', label: `openclaw mcp set ${SERVER_NAME}`, undo: [command, 'mcp', 'unset', SERVER_NAME] };
+        },
+      },
+      standingBlockStep(ctx, this.id, join(openclawWorkspace(ctx), 'AGENTS.md')),
+    ];
+  },
+  verify(ctx) {
+    return verifyJson(ctx, openclawConfig(ctx), ['mcp', 'servers', SERVER_NAME]);
+  },
+};
+
+function claudeDesktopDir(ctx) {
+  if (ctx.env.CLAUDE_USER_DATA_DIR) return resolve(ctx.env.CLAUDE_USER_DATA_DIR);
+  return process.platform === 'darwin'
+    ? join(ctx.home, 'Library', 'Application Support', 'Claude')
+    : join(xdg(ctx, 'XDG_CONFIG_HOME', '.config'), 'Claude');
+}
+const claudeDesktopConfig = (ctx) => join(claudeDesktopDir(ctx), 'claude_desktop_config.json');
+
+/** Whether Claude Desktop is running. Asked only for the real home folder, as with the scheduler. */
+function claudeDesktopRunning(ctx) {
+  if (resolve(ctx.home) !== resolve(userInfo().homedir)) return false;
+  const names = process.platform === 'darwin' ? ['Claude'] : ['claude-desktop', 'Claude'];
+  return names.some((name) => spawnSync('pgrep', ['-x', name], { stdio: 'ignore' }).status === 0);
+}
+
+const CLAUDE_DESKTOP_OPEN = 'Claude Desktop is open. It keeps its settings file in memory and writes all of it back when it saves a setting, which would undo the change. Quit it (Claude > Quit Claude), then run this again.';
+
+// Claude Desktop reads mcpServers from claude_desktop_config.json when it starts. Its chat does
+// not show a server's instructions to the model and has no local file of standing instructions,
+// so the server is started with --instructions-in-tools: the instructions open the description
+// of its context_pack tool, which the model does see.
+const claudeDesktop = {
+  id: 'claude-desktop',
+  name: 'Claude Desktop',
+  restart: 'quit it completely and open it again',
+  find(ctx) {
+    const dir = claudeDesktopDir(ctx);
+    return existsSync(dir) ? { found: true, where: dir } : { found: false };
+  },
+  existing(ctx) {
+    return jsonEntry(claudeDesktopConfig(ctx));
+  },
+  plan(ctx) {
+    const file = claudeDesktopConfig(ctx);
+    readSettings(file);
+    return [{
+      say: `add ${SERVER_NAME} to mcpServers in ${file}, with the server's instructions in the description of context_pack (--instructions-in-tools)`,
+      apply: () => {
+        if (claudeDesktopRunning(ctx)) throw new InstallError(CLAUDE_DESKTOP_OPEN);
+        return addJsonEntry(ctx, file, MCP_SERVERS, { command: ctx.launcher, args: [...serverArgs(this.id), '--instructions-in-tools'] });
+      },
+    }];
+  },
+  /** Why the change cannot be taken back now, if it cannot. */
+  blocked(ctx) {
+    return claudeDesktopRunning(ctx) ? CLAUDE_DESKTOP_OPEN : undefined;
+  },
+  verify(ctx) {
+    return verifyJson(ctx, claudeDesktopConfig(ctx));
+  },
+};
+
+const copilotHome = (ctx) => resolve(expandHome(ctx, ctx.env.COPILOT_HOME || join(ctx.home, '.copilot')));
+// Files Copilot itself writes in its folder; skills/ and ide/ are made by other tools.
+const COPILOT_OWN = ['config.json', 'settings.json', 'logs', 'session-state', 'command-history-state', 'session-store.db', 'permissions-config.json', 'mcp-config.json', 'copilot-instructions.md'];
+
+/** VS Code's user folders, stable and Insiders, that are here. */
+function vscodeUserDirs(ctx) {
+  const base = process.platform === 'darwin' ? join(ctx.home, 'Library', 'Application Support') : xdg(ctx, 'XDG_CONFIG_HOME', '.config');
+  return ['Code', 'Code - Insiders'].map((name) => join(base, name, 'User')).filter((dir) => existsSync(dir));
+}
+
+/** Copilot CLI's command, not the shim VS Code puts on the PATH of its terminals. */
+function copilotCommand(ctx) {
+  const command = which(ctx, 'copilot');
+  return command && !/copilot-shim|copilotCli/.test(realCommand(command)) ? command : undefined;
+}
+
+// GitHub Copilot: Copilot CLI, and VS Code's Copilot agent from 1.143 on, read MCP servers from
+// ~/.copilot/mcp-config.json and standing instructions from ~/.copilot/copilot-instructions.md,
+// and show only allowlisted servers' instructions to the model. VS Code's local chat (older
+// versions, or chosen) reads servers from the user mcp.json and does show the instructions.
+const copilot = {
+  id: 'copilot',
+  name: 'GitHub Copilot',
+  restart: 'VS Code and Copilot CLI start MCP servers with a new session',
+  find(ctx) {
+    const command = copilotCommand(ctx);
+    if (command) return { found: true, where: command };
+    if (holdsAny(copilotHome(ctx), COPILOT_OWN)) return { found: true, where: copilotHome(ctx) };
+    const [vscode] = vscodeUserDirs(ctx);
+    if (vscode) return { found: true, where: vscode };
+    if (existsSync(copilotHome(ctx))) return { found: false, note: `${copilotHome(ctx)} holds none of Copilot's own files` };
+    return { found: false };
+  },
+  existing(ctx) {
+    return jsonEntry(join(copilotHome(ctx), 'mcp-config.json'))
+      ?? vscodeUserDirs(ctx).map((dir) => jsonEntry(join(dir, 'mcp.json'), ['servers', SERVER_NAME])).find(Boolean);
+  },
+  plan(ctx) {
+    const config = join(copilotHome(ctx), 'mcp-config.json');
+    readSettings(config);
+    const steps = [
+      {
+        say: `add ${SERVER_NAME} to mcpServers in ${config} (Copilot CLI, and VS Code's Copilot agent)`,
+        apply: () => addJsonEntry(ctx, config, MCP_SERVERS, { type: 'local', command: ctx.launcher, args: serverArgs(this.id), tools: ['*'] }),
+      },
+      standingBlockStep(ctx, this.id, join(copilotHome(ctx), 'copilot-instructions.md')),
+    ];
+    for (const dir of vscodeUserDirs(ctx)) {
+      const file = join(dir, 'mcp.json');
+      readSettings(file);
+      steps.push({
+        say: `add ${SERVER_NAME} to servers in ${file} (VS Code's local chat)`,
+        apply: () => addJsonEntry(ctx, file, ['servers', SERVER_NAME], { type: 'stdio', command: ctx.launcher, args: serverArgs(this.id) }),
+      });
+    }
+    return steps;
+  },
+  verify(ctx) {
+    return verifyJson(ctx, join(copilotHome(ctx), 'mcp-config.json'));
+  },
+};
+
+const piHome = (ctx) => resolve(expandHome(ctx, ctx.env.PI_CODING_AGENT_DIR || join(ctx.home, '.pi', 'agent')));
+// Files Pi itself writes in its folder; skills/ and extensions/ are also made by other tools.
+const PI_OWN = ['auth.json', 'settings.json', 'sessions', 'models-store.json', 'trust.json', 'mcp.json'];
+// Pi reads the first of these in its folder in every session.
+export const PI_CONTEXT = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD'];
+
+/** Pi's command: a `pi` on PATH that is Pi's package (another program may be called pi). */
+function piCommand(ctx) {
+  const command = which(ctx, 'pi');
+  return command && /pi-coding-agent/.test(realCommand(command)) ? command : undefined;
+}
+
+// Pi (0.99 and later) reads MCP servers from ~/.pi/agent/mcp.json; "exposure": "direct" declares
+// the tools to the model like its own. It does not show a server's instructions to the model,
+// so they go into the context file Pi reads in every session.
+const pi = {
+  id: 'pi',
+  name: 'Pi',
+  restart: 'a running session loads MCP servers again with /reload',
+  find(ctx) {
+    const command = piCommand(ctx);
+    if (command) return { found: true, where: command };
+    if (holdsAny(piHome(ctx), PI_OWN)) return { found: true, where: piHome(ctx) };
+    if (existsSync(piHome(ctx))) return { found: false, note: `${piHome(ctx)} holds none of Pi's own files` };
+    return { found: false };
+  },
+  existing(ctx) {
+    const config = join(piHome(ctx), 'mcp.json');
+    // Pi treats protocol-chaos and protocol_chaos as one name.
+    return jsonEntry(config) ?? jsonEntry(config, ['mcpServers', 'protocol-chaos']);
+  },
+  plan(ctx) {
+    const command = piCommand(ctx);
+    const current = command ? versionOf(ctx, command) : undefined;
+    if (older(current, [0, 99, 0])) throw new InstallError(`Pi ${current.join('.')} has no MCP support; Pi 0.99 and later have. Update Pi, then run this again.`);
+    const config = join(piHome(ctx), 'mcp.json');
+    readSettings(config);
+    const context = PI_CONTEXT.map((name) => join(piHome(ctx), name)).find((file) => existsSync(file)) ?? join(piHome(ctx), 'AGENTS.md');
+    return [
+      {
+        say: `add ${SERVER_NAME} to mcpServers in ${config}, its tools declared to the model (exposure: direct)`,
+        apply: () => addJsonEntry(ctx, config, MCP_SERVERS, { command: ctx.launcher, args: serverArgs(this.id), exposure: 'direct' }),
+      },
+      standingBlockStep(ctx, this.id, context),
+    ];
+  },
+  verify(ctx) {
+    return verifyJson(ctx, join(piHome(ctx), 'mcp.json'));
+  },
+};
+
+export const AGENTS = [claudeCode, codex, dsh, hermes, kiro, cursor, opencode, openclaw, claudeDesktop, copilot, pi];
 
 // ---------------------------------------------------------------------- runtime and launcher
 
@@ -1073,7 +1447,22 @@ async function init(ctx, options) {
     return 0;
   }
   const runtime = runtimePlan(ctx, options);
-  const plans = chosen.map((agent) => ({ agent, steps: agent.plan(ctx) }));
+  // An agent whose settings init cannot add to is left out, with the reason; the others go on.
+  let failed = 0;
+  const plans = [];
+  for (const agent of chosen) {
+    try {
+      plans.push({ agent, steps: agent.plan(ctx) });
+    } catch (error) {
+      if (!(error instanceof InstallError)) throw error;
+      failed += 1;
+      ctx.say(`  ${agent.name}: not connected. ${error.message}`);
+    }
+  }
+  if (!plans.length && !refresh && !organizerWanted) {
+    ctx.say('Nothing was changed.');
+    return failed ? 1 : 0;
+  }
   if (ctx.dryRun) {
     ctx.say('Would do, with --dry-run doing nothing:');
     if (runtime.install) ctx.say(`  copy the server (protocol-chaos ${version}) into ${runtime.dir}`);
@@ -1095,7 +1484,6 @@ async function init(ctx, options) {
   state.runtime = ensureLauncher(ctx, state, runtime);
   if (stale) ctx.say(`  launcher: runs protocol-chaos ${version} with ${process.execPath}`);
   writeState(ctx, state);
-  let failed = 0;
   for (const { agent, steps } of plans) {
     const changes = [];
     try {
@@ -1130,6 +1518,8 @@ async function init(ctx, options) {
   const connected = Object.values(state.agents).map((agent) => agent.name);
   if (connected.length) {
     ctx.say(`Connected: ${connected.join(', ')}. The repository: ${join(ctx.data, 'repository.json')}.`);
+    const restarts = plans.filter(({ agent }) => agent.restart && state.agents[agent.id]).map(({ agent }) => `${agent.name}: ${agent.restart}`);
+    if (restarts.length) ctx.say(`If they are open, start them again so they load the server. ${restarts.join('. ')}.`);
     ctx.say(connected.length > 1
       ? 'Start a new session in one of them and tell it about a plan; then ask another one where that plan stands.'
       : 'Start a new session and tell it about a plan; in a later session, ask where that plan stands.');
@@ -1210,8 +1600,15 @@ function uninstall(ctx, options) {
     ctx.say(Object.keys(state.agents).length ? 'None of those agents were connected by init.' : `Nothing to undo: no agent was connected by init with the repository at ${ctx.data}.`);
     return 0;
   }
+  let held = 0;
   for (const id of present) {
     const agent = state.agents[id];
+    const blocked = AGENTS.find((candidate) => candidate.id === id)?.blocked?.(ctx);
+    if (blocked && !ctx.dryRun) {
+      held += 1;
+      ctx.say(`  ${agent.name}: left connected for now. ${blocked}`);
+      continue;
+    }
     for (const change of [...agent.changes].reverse()) {
       const what = { block: `the block in ${change.file}`, json: `the ${SERVER_NAME} entry in ${change.file}`, file: `the file ${change.file}` }[change.kind] ?? change.label;
       ctx.say(`  ${agent.name}: ${ctx.dryRun ? `would undo ${what}` : undo(ctx, change)}`);
@@ -1238,7 +1635,7 @@ function uninstall(ctx, options) {
   } else {
     writeState(ctx, state);
   }
-  return 0;
+  return held ? 1 : 0;
 }
 
 // ----------------------------------------------------------------------------------- doctor

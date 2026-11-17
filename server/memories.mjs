@@ -1,7 +1,9 @@
 // Importing the memories other assistants keep on this machine, once, so that a new repository
 // does not start empty: Claude Code's CLAUDE.md and its memory folders, Codex's AGENTS.md and
 // memories, Gemini CLI's GEMINI.md, Hermes's MEMORY.md and USER.md, the steering files Kiro
-// includes in every conversation, Cursor's rules and AGENTS.md, DeepSeek Harness's AGENTS.md.
+// includes in every conversation, Cursor's rules and AGENTS.md, DeepSeek Harness's AGENTS.md,
+// OpenCode's AGENTS.md, OpenClaw's MEMORY.md, USER.md and newest daily notes, Copilot's
+// standing instructions and VS Code Copilot's memories, Pi's context file.
 // The files are only read. Parts of them about this repository, our own blocks, and keys,
 // tokens and long numbers are left out before anything is sent.
 //
@@ -29,6 +31,7 @@ import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import jsonc from 'jsonc-parser';
 import { askModel, IMPORT_ACTOR, jsonObject, lockHeld, readOrganizer, releaseLock, takeLock } from './organize.mjs';
 import { Store } from './store.mjs';
 import { ProtocolError } from './validate.mjs';
@@ -50,7 +53,12 @@ const FACT_KEYS = ['goal', 'constraint', 'plan'];
 const ACTOR = { kind: 'agent', id: IMPORT_ACTOR };
 const AGENT_NAMES = {
   'claude-code': 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', hermes: 'Hermes', kiro: 'Kiro', cursor: 'Cursor', dsh: 'DeepSeek Harness',
+  opencode: 'OpenCode', openclaw: 'OpenClaw', copilot: 'GitHub Copilot', pi: 'Pi',
 };
+// OpenClaw writes a daily note a day; the newest ones are read.
+const DAILY_NOTES = 30;
+// Pi reads the first of these in its folder in every session (as install.mjs).
+const PI_CONTEXT = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE.MD'];
 
 /** What the model is asked to do with one part of the notes. */
 export const IMPORT_RULES = [
@@ -114,7 +122,36 @@ function agentHomes(env) {
     kiro: join(home, '.kiro'),
     cursor: join(home, '.cursor'),
     dsh: resolve(env.DSH_HOME || join(home, '.dsh')),
+    opencode: join(resolve(tildeOff(env.XDG_CONFIG_HOME, home) || join(home, '.config')), 'opencode'),
+    openclaw: openclawWorkspace(env, home),
+    copilot: resolve(tildeOff(env.COPILOT_HOME, home) || join(home, '.copilot')),
+    vscode: vscodeUserDirs(env, home),
+    pi: resolve(tildeOff(env.PI_CODING_AGENT_DIR, home) || join(home, '.pi', 'agent')),
   };
+}
+
+const tildeOff = (path, home) => (path && (path === '~' || path.startsWith('~/')) ? join(home, path.slice(1)) : path);
+
+function readJsonc(file) {
+  try {
+    const value = jsonc.parse(readFileSync(file, 'utf8'), [], { allowTrailingComma: true });
+    return value && typeof value === 'object' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The default agent's workspace of OpenClaw, as install.mjs finds it. */
+function openclawWorkspace(env, home) {
+  if (env.OPENCLAW_WORKSPACE_DIR) return resolve(env.OPENCLAW_WORKSPACE_DIR);
+  const state = resolve(tildeOff(env.OPENCLAW_STATE_DIR, home) || join(env.OPENCLAW_HOME || home, '.openclaw'));
+  const configured = readJsonc(resolve(tildeOff(env.OPENCLAW_CONFIG_PATH, home) || join(state, 'openclaw.json')))?.agents?.defaults?.workspace;
+  return typeof configured === 'string' && configured.trim() ? resolve(tildeOff(configured.trim(), home)) : join(state, 'workspace');
+}
+
+function vscodeUserDirs(env, home) {
+  const base = process.platform === 'darwin' ? join(home, 'Library', 'Application Support') : resolve(tildeOff(env.XDG_CONFIG_HOME, home) || join(home, '.config'));
+  return ['Code', 'Code - Insiders'].map((name) => join(base, name, 'User'));
 }
 
 const list = (folder, test = () => true) => {
@@ -149,6 +186,22 @@ function candidates(env) {
   add('cursor', join(homes.cursor, 'AGENTS.md'), 'Cursor: AGENTS.md');
   for (const name of list(join(homes.cursor, 'rules'), (file) => /\.mdc?$/.test(file))) add('cursor', join(homes.cursor, 'rules', name), `Cursor rules: ${name}`, 'front-matter');
   add('dsh', join(homes.dsh, 'AGENTS.md'), 'DeepSeek Harness: AGENTS.md');
+  add('opencode', join(homes.opencode, 'AGENTS.md'), 'OpenCode: AGENTS.md');
+  add('openclaw', join(homes.openclaw, 'MEMORY.md'), 'OpenClaw memory: MEMORY.md');
+  add('openclaw', join(homes.openclaw, 'USER.md'), 'OpenClaw: USER.md');
+  const daily = join(homes.openclaw, 'memory');
+  const notes = list(daily, (name) => name.endsWith('.md')).reverse();
+  for (const name of notes.slice(0, DAILY_NOTES)) add('openclaw', join(daily, name), `OpenClaw daily note: ${name}`);
+  if (notes.length > DAILY_NOTES) {
+    out.push({ agent: 'openclaw', path: daily, via: 'OpenClaw daily notes', kind: 'folder', why: `${notes.length - DAILY_NOTES} older daily notes; the newest ${DAILY_NOTES} are read` });
+  }
+  add('copilot', join(homes.copilot, 'copilot-instructions.md'), 'GitHub Copilot: copilot-instructions.md');
+  for (const dir of homes.vscode) {
+    const memories = join(dir, 'globalStorage', 'github.copilot-chat', 'memory-tool', 'memories');
+    for (const name of list(memories, (file) => file.endsWith('.md'))) add('copilot', join(memories, name), `VS Code Copilot memory: ${name}`);
+  }
+  const context = PI_CONTEXT.find((name) => existsSync(join(homes.pi, name)));
+  if (context) add('pi', join(homes.pi, context), `Pi: ${context}`);
   return out;
 }
 
@@ -201,6 +254,10 @@ export function findSources(env = process.env) {
   const files = [];
   const skipped = [];
   for (const candidate of candidates(env)) {
+    if (candidate.why) {
+      skipped.push(candidate);
+      continue;
+    }
     let info;
     try {
       info = statSync(candidate.path);

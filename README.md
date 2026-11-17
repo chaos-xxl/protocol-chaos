@@ -32,7 +32,7 @@ flowchart LR
 
 ## Quick start
 
-You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex, DeepSeek Harness, Hermes, Kiro and Cursor on this computer and connects the ones you pick to one repository:
+You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex, DeepSeek Harness, Hermes, Kiro, Cursor, OpenCode, OpenClaw, Claude Desktop, GitHub Copilot (VS Code and Copilot CLI) and Pi on this computer and connects the ones you pick to one repository:
 
 ```sh
 npx protocol-chaos init
@@ -130,7 +130,7 @@ Protocol Chaos is a draft, and drafts carry no compatibility promise. Draft 0.2 
 Next:
 
 - The [Hermes plugin](integrations/hermes/protocol-chaos/README.md) in Hermes's plugin catalog, once it has been in daily use for a while.
-- More agents for `init`, a few at a time, starting with OpenCode, OpenClaw, Claude Desktop, GitHub Copilot and Pi. Pull requests for others are welcome: each agent is one object in [server/install.mjs](server/install.mjs).
+- More agents for `init`, a few at a time: next Antigravity, Devin Desktop and Devin CLI, Cline, Kilo Code and Gemini CLI. Pull requests for others are welcome: each agent is one object in [server/install.mjs](server/install.mjs).
 - Per-client visibility: what each assistant may read (§13).
 - Recognising the same person across applications (§13).
 - Draft 0.3, from the cases people report.

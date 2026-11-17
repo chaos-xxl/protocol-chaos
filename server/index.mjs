@@ -3,7 +3,7 @@
 // and Remote, keeping the repository in one JSON file (store.mjs).
 //
 //   protocol-chaos [--data <directory>] [--client <name>] [--tools <groups>] [--owner-tools]
-//                                                                              MCP over stdio (§9.1)
+//                  [--instructions-in-tools]                                     MCP over stdio (§9.1)
 //   protocol-chaos --http [<host>:]<port> [--tls-cert <file> --tls-key <file>]
 //                  [--data <directory>] [--tools <groups>] [--owner-tools]        MCP over HTTP (§9.2)
 //   protocol-chaos clients add <name> [--tools <groups>] | tools <name> <groups>|default
@@ -22,6 +22,9 @@
 //                (assistant, writer, all). Default: all. Over HTTP a client can have its own
 //                list (clients add --tools, clients tools); the server's levels are those of
 //                everything it can offer.
+// --instructions-in-tools  also put the server's instructions at the start of the description
+//                of context_pack, for clients that show their model the tools but not the
+//                instructions and have no file of standing instructions (Claude Desktop).
 // --owner-tools  also offer repository_export and repository_import. An export holds
 //                everything, so they are off unless the owner asks (§8.6, §10); the
 //                conformance tests use them. Without them, the file itself is the export.
@@ -82,6 +85,7 @@ for (let index = 0; index < args.length; index += 1) {
 }
 const directory = resolve(option('--data') ?? process.env.PROTOCOL_CHAOS_DATA ?? join(homedir(), '.protocol-chaos'));
 const ownerTools = args.includes('--owner-tools');
+const instructionsInTools = args.includes('--instructions-in-tools');
 
 // Tool groups (§9.1 lets a server offer a connection only some of its operations). Profiles
 // name the usual choices: an assistant whose words an organizer folds into fields later, an
@@ -582,10 +586,17 @@ function createServer({ client, remote = true } = {}) {
     { capabilities: { tools: {} }, instructions: instructions(client, { importStatus: importing ? importOffer(directory) : undefined }) },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [...offered, ...(importing && importOffer(directory) ? [IMPORT_TOOL] : [])]
-      .map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations })),
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const status = importing ? importOffer(directory) : undefined;
+    // For a client that shows tools but not the instructions, the instructions open the directory's description.
+    const describe = (name, description) => (instructionsInTools && name === 'context_pack'
+      ? `How to use this server (its instructions, which this client does not show otherwise):\n\n${instructions(client, { importStatus: status })}\n\nThe tool: ${description}`
+      : description);
+    return {
+      tools: [...offered, ...(status ? [IMPORT_TOOL] : [])]
+        .map(({ name, description, inputSchema, annotations }) => ({ name, description: describe(name, description), inputSchema, annotations })),
+    };
+  });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const input = request.params.arguments ?? {};
