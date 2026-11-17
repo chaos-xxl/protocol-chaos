@@ -364,6 +364,19 @@ test('Kiro gets an entry in its mcp.json and a steering file, Cursor an entry an
   assert.ok(!existsSync(join(home, '.cursor', 'skills')), 'and the skills folder');
 });
 
+test('a folder that holds only skills, as `npx skills add` leaves for many agents, is not taken for an install', () => {
+  const home = freshHome();
+  rmSync(join(home, '.codex'), { recursive: true });
+  for (const folder of ['.codex', '.kiro', '.cursor']) mkdirSync(join(home, folder, 'skills', 'some-skill'), { recursive: true });
+  const result = installer(home, 'init', '--yes', '--only', 'codex,kiro,cursor');
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Codex\s+not found: \S+\.codex holds only skills/);
+  assert.match(result.out, /Kiro\s+not found: \S+\.kiro holds only skills/);
+  assert.match(result.out, /Cursor\s+not found: \S+\.cursor holds only skills/);
+  assert.match(result.out, /No agent to connect/);
+  assert.ok(!existsSync(join(home, '.cursor', 'mcp.json')) && !existsSync(join(home, '.kiro', 'settings')));
+});
+
 test('Kiro and Cursor: settings edited since are kept, an entry elsewhere is left alone, and files init cannot read are refused', () => {
   const home = freshHome();
   mkdirSync(join(home, '.kiro', 'steering'), { recursive: true });

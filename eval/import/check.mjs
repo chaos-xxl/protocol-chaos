@@ -47,11 +47,13 @@ Long-term goal: financial independence by 40. Sam puts 3,000 yuan a month into a
 `,
 };
 
+// The long-term goal's title, in either language. 财务独立 was added after the first run (README.md, Changes).
+const AIM = /financial independence|财务自由|财务独立/i;
 const CHECKS = [
   ['the Lisbon trip, with its budget', (events) => events.some((e) => /Lisbon|里斯本|葡萄牙/i.test(e.title) && /15,?000|一万五|1\.5 ?万/.test(JSON.stringify(e.facts ?? {})))],
-  ['financial independence, as a matter', (events) => events.some((e) => /financial independence|财务自由/i.test(e.title))],
+  ['financial independence, as a matter', (events) => events.some((e) => AIM.test(e.title))],
   ['a part of it under it (the fund or the app)', (events) => {
-    const aim = events.find((e) => /financial independence|财务自由/i.test(e.title));
+    const aim = events.find((e) => AIM.test(e.title));
     return Boolean(aim) && events.some((e) => e.parents.includes(aim.id));
   }],
   ['the cello, set aside', (events) => events.some((e) => /cello|大提琴/i.test(e.title) && ['dormant', 'waiting'].includes(e.state))],

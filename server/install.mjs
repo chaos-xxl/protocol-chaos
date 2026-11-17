@@ -342,6 +342,32 @@ const yamlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
 
 // ----------------------------------------------------------------------------------- agents
 
+/**
+ * Whether an agent's own folder says the agent is installed. `npx skills add` makes a skills
+ * folder for many agents at once, whether or not they are installed, so a folder that holds
+ * nothing but that (and what `also` names) is no sign of the agent. An empty folder still is.
+ */
+function agentFolder(dir, also = []) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  return entries.length === 0 || entries.some((name) => !['skills', '.DS_Store', ...also].includes(name));
+}
+
+/** find() for an agent known by its commands and its own folder. */
+function findBy(ctx, commands, folder, also) {
+  for (const name of commands) {
+    const command = which(ctx, name);
+    if (command) return { found: true, where: command };
+  }
+  if (agentFolder(folder, also)) return { found: true, where: folder };
+  if (existsSync(folder)) return { found: false, note: `${folder} holds only skills, which \`npx skills add\` makes for many agents` };
+  return { found: false };
+}
+
 /** The arguments each agent's MCP entry passes to the launcher. */
 const serverArgs = (client) => ['--client', client, '--tools', TOOLS];
 
@@ -405,10 +431,7 @@ const codex = {
   id: 'codex',
   name: 'Codex',
   find(ctx) {
-    const command = which(ctx, 'codex');
-    if (command) return { found: true, where: command };
-    if (existsSync(codexHome(ctx))) return { found: true, where: codexHome(ctx) };
-    return { found: false };
+    return findBy(ctx, ['codex'], codexHome(ctx));
   },
   existing(ctx) {
     const file = join(codexHome(ctx), 'config.toml');
@@ -490,8 +513,7 @@ const dsh = {
   find(ctx) {
     const command = dshCommand(ctx);
     if (command) return { found: true, where: command };
-    if (existsSync(dshHome(ctx))) return { found: true, where: dshHome(ctx) };
-    return { found: false };
+    return findBy(ctx, [], dshHome(ctx));
   },
   existing(ctx) {
     const file = dshPatchFiles(ctx).find((candidate) => DSH_SERVER.test(readFileSync(candidate, 'utf8')));
@@ -707,10 +729,7 @@ const kiro = {
   id: 'kiro',
   name: 'Kiro',
   find(ctx) {
-    const command = which(ctx, 'kiro') ?? which(ctx, 'kiro-cli');
-    if (command) return { found: true, where: command };
-    if (existsSync(kiroHome(ctx))) return { found: true, where: kiroHome(ctx) };
-    return { found: false };
+    return findBy(ctx, ['kiro', 'kiro-cli'], kiroHome(ctx));
   },
   existing(ctx) {
     return jsonEntry(join(kiroHome(ctx), 'settings', 'mcp.json'));
@@ -749,10 +768,7 @@ const cursor = {
   id: 'cursor',
   name: 'Cursor',
   find(ctx) {
-    const command = which(ctx, 'cursor') ?? which(ctx, 'cursor-agent');
-    if (command) return { found: true, where: command };
-    if (existsSync(cursorHome(ctx))) return { found: true, where: cursorHome(ctx) };
-    return { found: false };
+    return findBy(ctx, ['cursor', 'cursor-agent'], cursorHome(ctx));
   },
   existing(ctx) {
     return jsonEntry(join(cursorHome(ctx), 'mcp.json'));
