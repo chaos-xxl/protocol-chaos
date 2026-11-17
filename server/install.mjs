@@ -10,7 +10,8 @@
 // and gives each agent an MCP server named protocol_chaos that runs the launcher with the
 // agent's own name. The agent's model is told how to use the repository by the server's
 // instructions; where an agent does not show those to its model as instructions (Codex, Kiro,
-// Cursor), init also writes them where the agent keeps standing instructions. Agents read the
+// Cursor, OpenClaw, GitHub Copilot, Pi), init also writes them where the agent keeps standing
+// instructions, and for Claude Desktop, which keeps none, into a tool's description. Agents read the
 // directory themselves and open what they need: nothing is added to a turn before the model
 // answers. Every change is recorded in <data>/installed.json, and every file edited is copied
 // to <data>/backups first. uninstall undoes the changes and keeps the repository.
