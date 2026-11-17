@@ -288,3 +288,21 @@ test('Hermes gets a token, the server over HTTP, its .env, an MCP server and the
   const after = read(join(home, 'hermes-calls.log'));
   assert.ok(after.includes('plugins remove protocol-chaos') && after.includes('config unset mcp_servers.protocol_chaos'));
 });
+
+test('a second run repairs a launcher whose Node.js is gone', () => {
+  const home = freshHome();
+  assert.equal(installer(home, 'init', '--yes', '--only', 'codex').code, 0);
+  const stateFile = join(home, '.protocol-chaos', 'installed.json');
+  const launcher = join(home, '.protocol-chaos', 'bin', 'protocol-chaos');
+  const state = JSON.parse(read(stateFile));
+  writeFileSync(stateFile, JSON.stringify({ ...state, runtime: { ...state.runtime, node: '/gone/node' } }));
+  writeFileSync(launcher, read(launcher).replace(process.execPath, '/gone/node'));
+  const broken = installer(home, 'doctor');
+  assert.equal(broken.code, 1, broken.out);
+  const repaired = installer(home, 'init', '--yes');
+  assert.equal(repaired.code, 0, repaired.out);
+  assert.match(repaired.out, /launcher: runs protocol-chaos [\d.]+ with /);
+  assert.ok(read(launcher).includes(process.execPath) && !read(launcher).includes('/gone/node'));
+  assert.equal(installer(home, 'doctor').code, 0);
+  assert.match(installer(home, 'init', '--yes').out, /Nothing to do/, 'once repaired, nothing more to do');
+});

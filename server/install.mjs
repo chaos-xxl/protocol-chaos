@@ -88,6 +88,10 @@ export async function runInstaller(command, argv, env = process.env) {
     process.stdout.write(HELP);
     return 0;
   }
+  if (process.platform === 'win32') {
+    process.stderr.write('init, uninstall and doctor support macOS and Linux for now. On Windows, connect each assistant by hand: see "Quick start" in the README.\n');
+    return 1;
+  }
   const ctx = context(options, env);
   try {
     if (command === 'init') return await init(ctx, options);
@@ -604,6 +608,17 @@ function launcherText(ctx, entry) {
 }
 
 /** Puts the runtime and the launcher in place; returns the state's runtime record. */
+/**
+ * Whether the launcher must be written again: another version or Node.js runs init now, or the
+ * Node.js, the server or the launcher it wrote is gone or changed (Node.js upgraded, say).
+ */
+function runtimeStale(ctx, state, options) {
+  const runtime = state.runtime;
+  if (!runtime || runtime.version !== version || runtime.node !== process.execPath) return true;
+  if (runtime.entry !== runtimePlan(ctx, options).entry || !existsSync(runtime.entry) || !existsSync(runtime.node)) return true;
+  return !existsSync(ctx.launcher) || sha256(readFileSync(ctx.launcher, 'utf8')) !== runtime.launcherSha256;
+}
+
 function ensureLauncher(ctx, state, runtime) {
   if (runtime.install) runtime.install();
   const text = launcherText(ctx, runtime.entry);
@@ -761,7 +776,7 @@ async function init(ctx, options) {
   }
   ctx.say('');
   const candidates = rows.filter((row) => row.found.found && !row.ours && !row.existing).map((row) => row.agent);
-  const refresh = rows.some((row) => row.ours) && (state.runtime?.version !== version || state.runtime?.entry !== runtimePlan(ctx, options).entry);
+  const refresh = rows.some((row) => row.ours) && runtimeStale(ctx, state, options);
   const organizerWanted = Object.keys(state.agents).length > 0 && (options.organizer !== undefined || (!state.organizer?.agent && !state.organizer?.declined));
   if (!candidates.length && !refresh && !organizerWanted) {
     ctx.say(rows.some((row) => row.ours) ? 'Nothing to do. `npx protocol-chaos doctor` checks the connections.' : 'No agent to connect.');
@@ -792,7 +807,9 @@ async function init(ctx, options) {
   mkdirSync(ctx.data, { recursive: true, mode: 0o700 });
   state.installer = `protocol-chaos ${version}`;
   state.launcher = ctx.launcher;
+  const stale = Object.keys(state.agents).length > 0 && runtimeStale(ctx, state, options);
   state.runtime = ensureLauncher(ctx, state, runtime);
+  if (stale) ctx.say(`  launcher: runs protocol-chaos ${version} with ${process.execPath}`);
   writeState(ctx, state);
   let failed = 0;
   for (const { agent, steps } of plans) {
