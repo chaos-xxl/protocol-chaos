@@ -40,6 +40,8 @@ const CASES = [
     check: (e) => ['cancelled', 'dormant'].includes(e.state) },
   { name: 'an episode stays out of a long-lived matter', title: '家里的网络', facts: { goal: '家里网络稳定，能远程连回家。' }, parts: ['2026 年 11 月路由器故障'], words: '今天路由器又坏了，先用手机热点顶着',
     check: (e) => !/热点/.test(`${JSON.stringify(e.facts ?? {})} ${e.progress?.text ?? ''}`) },
+  { name: 'an episode keeps its own progress', title: '2026 年 11 月路由器故障', episodeOf: '家里的网络', words: '今天路由器又坏了，先用手机热点顶着',
+    check: (e, outcome) => outcome === 'changed' && /热点|坏/.test(`${e.progress?.text ?? ''} ${JSON.stringify(e.facts ?? {})}`) },
   { name: 'a relative date becomes a date', title: '2026 年冬天搬家', words: '下周六先去新房量尺寸',
     check: (e) => /2026|11 月|11月|11-/.test(`${e.facts?.plan ?? ''} ${e.progress?.text ?? ''}`) },
   { name: 'an assistant\'s inference stays marked', title: '2027 年换电车', note: true, words: '推测：用户在认真考虑电车（依据：问了两次试驾流程）',
@@ -57,7 +59,10 @@ for (const item of CASES) {
     const store = new Store(data);
     let eventId;
     let parent;
-    if (item.parts) {
+    if (item.episodeOf) {
+      const larger = await store.write((repo) => repo.eventNote({ actor: user, text: '家里网络老掉线，想把网络整个弄稳定', title: item.episodeOf }));
+      eventId = (await store.write((repo) => repo.eventNote({ actor: user, text: item.words, title: item.title, parentEventId: larger.eventId }))).eventId;
+    } else if (item.parts) {
       parent = await store.write((repo) => repo.eventNote({ actor: user, text: item.earlier?.[0] ?? item.title, title: item.title }));
       await store.write((repo) => repo.eventNote({ actor: user, text: `${item.parts[0]}，已经修好了`, title: item.parts[0], parentEventId: parent.eventId }));
       eventId = parent.eventId;
@@ -73,7 +78,9 @@ for (const item of CASES) {
       const firstAccount = store.read((repo) => repo.getProtocol({ eventId })).accounts[0];
       await store.write((repo) => repo.recordExpression({ eventId, actor: user, text: firstAccount.text, accountId: firstAccount.id, expectedVersion: before.version, set }));
     }
-    const receipt = await store.write((repo) => repo.eventNote({ eventId, actor: user, text: item.words, accountSource: item.note ? 'agent_response' : 'user' }));
+    const receipt = item.episodeOf
+      ? { accountId: store.read((repo) => repo.getProtocol({ eventId })).accounts[0].id }
+      : await store.write((repo) => repo.eventNote({ eventId, actor: user, text: item.words, accountSource: item.note ? 'agent_response' : 'user' }));
     let usage;
     const ask = async (_directory, _config, instructions, text) => {
       const answer = await provider.complete([{ role: 'system', content: instructions }, { role: 'user', content: text.replace(/said on \d{4}-\d{2}-\d{2}/, `said on ${said}`) }], [], { conversationId: `fold-check-${item.name}` });

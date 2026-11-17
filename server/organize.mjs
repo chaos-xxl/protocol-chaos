@@ -3,7 +3,9 @@
 // them into that matter's fields (title, state, progress, goal, constraint, plan, refs) with one
 // model call. The model is that of the agent chosen as the organizer, run headless:
 // `claude -p` (Claude Code), `dsh --profile headless` (DeepSeek Harness) or `codex exec` (Codex).
-// <data>/organizer.json, written by `init`, says which; without it nothing is queued.
+// <data>/organizer.json, written by `init`, says which; without it nothing is queued. DeepSeek
+// Harness runs with an overlay (dshOverlay): the keys saved in the app, no tools, no session
+// history, one small model with thinking off.
 //
 //   protocol-chaos organize --pending [--data <directory>]   fold what is queued (the server starts it)
 //   protocol-chaos organize --sweep [--data <directory>]     fold the words nobody folded since the last sweep
@@ -34,13 +36,14 @@ const SETTLE_MS = 15_000;
 const LOCK_STALE_MS = 15 * 60_000;
 const MODEL_TIMEOUT_MS = 180_000;
 const DONE_KEPT = 2000;
+const MAX_TRIES = 3;
 
 /** The rules for one fold, from the Hermes plugin's structure update (integrations/hermes). */
 export const FOLD_INSTRUCTIONS = [
   "You keep one of the user's long-lived matters up to date in their personal repository. You are given the matter as it stands, its earlier words, and the new words just said about it. Decide what the new words establish beyond what the matter already says, and answer with only those changes, leaving every other field null; if they establish nothing new, answer change: false. A question, a hypothetical or a request establishes nothing about the matter: answer change: false.",
   'goal: what the matter is meant to achieve, including what would count as done. constraint: conditions it must meet: limits, deadlines, budgets, wishes and preferences, even a wish about a place or a time. plan: the arrangement as currently decided: when, where, how, which option. A wish moves from constraint into plan once it is decided; never put the same thing in both: when you add a decision to plan, rewrite constraint without the wish it settles, and when nothing of a fact still holds, answer that fact as the string "(remove)". A value you give replaces the stored one, so write its complete new content: everything that still holds plus the change, as natural language in the language of the user\'s words, clear on its own, never an object or a list.',
   'progress: where the matter stands now, in one short sentence, only when the words say how far it got. state, only when the words make it clear: active (being pursued), waiting (on something or someone), dormant (set aside), done (achieved), cancelled (given up). involves: people, places or things the new words themselves name that the matter does not list yet, each a short description in the user\'s terms such as \'my wife\' or \'Lisbon\'; never the user themself. title: only when the matter has none: what it is, and when or which where that tells it apart.',
-  'A long-lived matter holds only what is true of it as a whole. When the matter has parts, or the new words are about one episode of it (one breakdown, one trip, one visit), leave out of it whatever holds only for that episode: the episode\'s own progress, a passing condition such as being away from home for now, a temporary setting. Those belong on the episode, so they are not changes to this matter: when the new words are only about one episode, answer change: false.',
+  'A long-lived matter holds only what is true of it as a whole. When this matter is a long-lived one and the new words are about one episode of it (one breakdown, one trip, one visit), leave out of it whatever holds only for that episode: the episode\'s own progress, a passing condition such as being away from home for now, a temporary setting; when the new words are only about such an episode, answer change: false. When this matter is itself the episode (it is part of a larger matter, and the words are about it), its own progress and passing conditions belong here.',
   "Write relative times as concrete dates, counted from the day the new words were said. Never write 'the user'; write the facts themselves. Words marked as a note by an assistant are that assistant's own sentence: either a record of what it did or found, which you fold as fact, naming the basis where it helps, or an inference, which the note marks as one and you keep marked as one; never write either over the user's own words. Older details are things the user said before: when you write the aspect they belong to, fold in what still holds.",
   'Answer with one JSON object and nothing else: {"change": true or false, "title": string or null, "state": string or null, "progress": string or null, "goal": string or null, "constraint": string or null, "plan": string or null, "involves": array of strings or null}. Do not use any tool.',
 ].join('\n\n');
@@ -177,12 +180,10 @@ export function foldInput(result, account, entries = []) {
   const involves = (event.refs ?? []).map((ref) => ref.criteria || names.get(ref.ref) || '').filter(Boolean);
   lines.push(`involves: ${involves.join('; ') || '(none)'}`);
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  for (const parent of event.parents ?? []) {
-    const title = byId.get(parent)?.title;
-    if (title) lines.push(`part of: ${clip(title, 80)}`);
-  }
+  const larger = (event.parents ?? []).map((parent) => byId.get(parent)?.title).filter(Boolean);
+  if (larger.length) lines.push(`part of: ${larger.map((title) => clip(title, 80)).join('; ')} (this matter is one part of it: what the new words say about this part belongs here)`);
   const parts = entries.filter((entry) => (entry.parents ?? []).includes(event.id) && OPEN_STATES.includes(entry.state));
-  if (parts.length) lines.push(`parts: ${parts.slice(0, PARTS_SHOWN).map((entry) => clip(entry.title || '(untitled)', 60)).join('; ')}`);
+  if (parts.length) lines.push(`parts: ${parts.slice(0, PARTS_SHOWN).map((entry) => clip(entry.title || '(untitled)', 60)).join('; ')} (what holds only for one of them belongs on that part, not here)`);
   const legacy = event.metadata?.['dev.protocol-chaos/legacy-0.1'];
   if (legacy) lines.push(`older details: ${clip(JSON.stringify(legacy), 1200)}`);
   const accounts = result.accounts ?? [];
@@ -317,6 +318,70 @@ export async function foldOne(directory, config, eventId, accountId, ask = askMo
 
 // ------------------------------------------------------------------------------- the models
 
+// DeepSeek Harness plugins the organizer's run leaves out: every tool (it answers in JSON and
+// nothing else), the session title (one more model call), the upload of the session log to
+// DeepSeek, workspace instructions, and the session history on disk (nothing of a run is kept).
+const DSH_LEFT_OUT = ['tool-bash', 'tool-pwsh', 'tool-jobs', 'tool-fs', 'tool-fs-search', 'tool-skill', 'skill-filesystem',
+  'tool-subagent-control', 'tool-subagent', 'tool-subagent-fork', 'tool-workflow', 'tool-todo', 'tool-goal', 'tool-web',
+  'web-search-deepseek', 'plan-mode', 'agent-instructions', 'session-title-llm', 'session-log-deepseek',
+  'session-persistence-jsonl', 'session-checkpoint-policy'];
+
+/** Whether DeepSeek Harness has this repository's MCP server (init's entry), which the organizer's run turns off. */
+function dshHasOurEntry() {
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh');
+  return [join(home, 'cordis.patch.yml'), join(home, 'profiles', 'headless', 'cordis.patch.yml')]
+    .some((file) => existsSync(file) && /id:\s*['"]?protocol-chaos-mcp['"]?/.test(readFileSync(file, 'utf8')));
+}
+
+const yamlQuote = (value) => `'${String(value).replace(/'/g, "''")}'`;
+
+/**
+ * The overlay on DeepSeek Harness's headless profile for one organizer run. The headless profile
+ * ignores the keys saved in the app; these rows restore them, as its README describes.
+ */
+export function dshOverlay(config, hasOurEntry = dshHasOurEntry()) {
+  const lines = ['# Written by protocol-chaos for its organizer: how DeepSeek Harness runs for one answer.'];
+  for (const id of ['credentials', 'authorization', 'deepseek-account']) lines.push(`- id: ${id}`, '  disabled: false');
+  for (const id of [...DSH_LEFT_OUT, ...(hasOurEntry ? ['protocol-chaos-mcp'] : [])]) lines.push(`- id: ${id}`, '  disabled: true');
+  lines.push('- id: agent-default-model', '  config:', `    provider: ${yamlQuote(config.provider ?? 'deepseek-official')}`,
+    `    model: ${yamlQuote(config.model ?? 'deepseek-flash')}`, `    reasoningEffort: ${yamlQuote(config.effort ?? 'off')}`);
+  return `${lines.join('\n')}\n`;
+}
+
+/** The answer and the tokens of a DeepSeek Harness run, from its --json event stream. */
+export function readDshEvents(stdout) {
+  let text;
+  let reason;
+  let failure;
+  let tools = 0;
+  const usage = { input: 0, output: 0, cached: 0 };
+  for (const line of String(stdout).split('\n')) {
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event.type === 'final') {
+      text = event.text;
+      reason = event.reason?.kind;
+    } else if (event.type === 'error') {
+      failure = event.message ?? event.code ?? 'error';
+    } else if (event.type === 'tool_call') {
+      tools += 1;
+    } else if (event.type === 'status' && event.usage) {
+      usage.input += event.usage.inputTokens ?? 0;
+      usage.output += event.usage.outputTokens ?? 0;
+      usage.cached += event.usage.cacheReadTokens ?? 0;
+    }
+  }
+  if (failure) throw new Error(`dsh: ${clip(failure, 200)}`);
+  // It has no tools; should one appear anyway, what came after it is not trusted.
+  if (tools) throw new Error(`dsh: the run called ${tools} tool${tools === 1 ? '' : 's'}, so its answer is not used`);
+  if (reason !== 'completed') throw new Error(`dsh: the run ended ${reason ?? 'without a final answer'}`);
+  return { text, usage };
+}
+
 /**
  * How each agent is run headless for one answer: no tools, no MCP servers of its own (so that
  * the organizer cannot record words and start itself again), and a budget where it has one.
@@ -339,12 +404,13 @@ function invocation(directory, config, instructions, input) {
   }
   if (config.agent === 'dsh') {
     const { overlay } = paths(directory);
-    writeFileSync(overlay, '# Written by protocol-chaos: its organizer runs DeepSeek Harness without this repository\'s MCP server.\n- id: protocol-chaos-mcp\n  disabled: true\n', { mode: 0o600 });
+    writeFileSync(overlay, dshOverlay(config), { mode: 0o600 });
     return {
       command,
-      args: ['--profile', config.profile ?? 'headless', '--patch', overlay, '--approval-policy', 'never', '-'],
+      // read-only and never: anything that would need someone's approval is refused.
+      args: ['--profile', config.profile ?? 'headless', '--patch', overlay, '--permission-mode', 'read-only', '--approval-policy', 'never', '--json', '-'],
       input: `${instructions}\n\n----\n\n${input}`,
-      read: (stdout) => ({ text: stdout }),
+      read: readDshEvents,
     };
   }
   if (config.agent === 'codex') {
@@ -424,7 +490,19 @@ async function foldAndLog(directory, config, state, eventId, accountId, why, ask
   } catch (error) {
     report = { outcome: 'failed', error: `${error.code ?? error.name}: ${error.message}` };
   }
-  if (report.outcome !== 'failed') state.done[accountId] = report.outcome;
+  if (report.outcome !== 'failed') {
+    state.done[accountId] = report.outcome;
+    if (state.failures) delete state.failures[accountId];
+  } else {
+    // Words whose fold keeps failing are given up after three tries, so that a daily sweep does
+    // not pay for them every day.
+    state.failures = state.failures ?? {};
+    state.failures[accountId] = (state.failures[accountId] ?? 0) + 1;
+    if (state.failures[accountId] >= MAX_TRIES) {
+      state.done[accountId] = 'gave up';
+      delete state.failures[accountId];
+    }
+  }
   log(directory, { run: why, agent: config.agent, eventId, accountId, ...report });
   return report;
 }

@@ -16,17 +16,24 @@ const SERVER = fileURLToPath(new URL('../index.mjs', import.meta.url));
 const folders = [];
 after(() => folders.forEach((folder) => rmSync(folder, { recursive: true, force: true })));
 
-// A stand-in for `dsh --profile headless`: logs its arguments, its input and one variable, and
-// answers with the JSON in $FAKE_ANSWER (read from a file next to it).
+// A stand-in for \`dsh --profile headless --json\`: logs its arguments, its overlay, its input and
+// one variable, and answers with the JSON in answer.json next to it, as DeepSeek Harness's event
+// stream. With a file named tool next to it, the run also calls a tool.
 const FAKE_AGENT = `#!/usr/bin/env node
-const { appendFileSync, readFileSync } = require('node:fs');
+const { appendFileSync, existsSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 let input = '';
 process.stdin.on('data', (chunk) => { input += chunk; });
 process.stdin.on('end', () => {
   const here = __dirname;
-  appendFileSync(join(here, 'calls.jsonl'), JSON.stringify({ args: process.argv.slice(2), input, organizing: process.env.PROTOCOL_CHAOS_ORGANIZING }) + '\\n');
-  process.stdout.write('Here is the answer:\\n' + readFileSync(join(here, 'answer.json'), 'utf8'));
+  const args = process.argv.slice(2);
+  const overlay = readFileSync(args[args.indexOf('--patch') + 1], 'utf8');
+  appendFileSync(join(here, 'calls.jsonl'), JSON.stringify({ args, overlay, input, organizing: process.env.PROTOCOL_CHAOS_ORGANIZING }) + '\\n');
+  const say = (event) => process.stdout.write(JSON.stringify(event) + '\\n');
+  say({ type: 'session', sessionId: 'session-1', cwd: process.cwd() });
+  if (existsSync(join(here, 'tool'))) say({ type: 'tool_call', name: 'bash', arguments: {} });
+  say({ type: 'status', phase: 'step_end', turn: 1, step: 1, usage: { inputTokens: 1200, outputTokens: 50, cacheReadTokens: 0 } });
+  say({ type: 'final', sessionId: 'session-1', reason: { kind: 'completed' }, text: 'Here is the answer:\\n' + readFileSync(join(here, 'answer.json'), 'utf8') });
 });
 `;
 
@@ -88,11 +95,17 @@ test('recorded words are folded into their matter in the background, grounded on
     await codex.close();
   }
   const [call] = world.calls();
-  assert.ok(call.args.includes('--patch') && call.args.includes('headless'), 'DSH runs headless, with its own MCP entry turned off');
+  assert.deepEqual(call.args.slice(0, 2), ['--profile', 'headless']);
+  for (const [flag, value] of [['--permission-mode', 'read-only'], ['--approval-policy', 'never']]) assert.equal(call.args[call.args.indexOf(flag) + 1], value);
+  assert.ok(call.args.includes('--json'));
+  assert.match(call.overlay, /- id: credentials\n {2}disabled: false/, 'the keys saved in the app are used');
+  for (const id of ['tool-bash', 'tool-fs', 'tool-web', 'session-title-llm', 'session-log-deepseek', 'session-persistence-jsonl']) assert.match(call.overlay, new RegExp(`- id: ${id}\\n {2}disabled: true`));
+  assert.match(call.overlay, /model: 'deepseek-flash'\n {4}reasoningEffort: 'off'/);
   assert.ok(call.input.includes(WORDS) && call.input.includes('The matter now:') && call.input.includes('Answer with one JSON object'));
   assert.equal(call.organizing, '1', 'whatever the organizer\'s agent starts knows it is the organizer');
   const log = readFileSync(join(world.data, 'organizer', 'log.jsonl'), 'utf8');
   assert.match(log, /"outcome":"changed"/);
+  assert.match(log, /"usage":\{"input":1200,"output":50,"cached":0\}/, 'the tokens of the run are logged');
   assert.ok(!log.includes('hallway') && !log.includes('sister'), 'the log holds ids and outcomes, not words');
 });
 
@@ -148,8 +161,8 @@ test('the fold input and patch follow the Hermes plugin\'s structure update', ()
   const { text, clipped } = foldInput(result, result.accounts[1], entries);
   assert.match(text, /said on 2026-11-16/);
   assert.match(text, /involves: Mei/);
-  assert.match(text, /part of: Travel more/);
-  assert.match(text, /parts: Lisbon flights/);
+  assert.match(text, /part of: Travel more \(this matter is one part of it/);
+  assert.match(text, /parts: Lisbon flights \(what holds only for one of them belongs on that part/);
   assert.match(text, /Earlier words, oldest first:\n- 2026-11-01: Thinking about Lisbon/);
   assert.ok(text.endsWith('The new words:\nBook flights in March'));
   const patch = foldPatch(result.event, { change: true, state: 'active', plan: 'Book flights in March 2027.', constraint: 'Under 20,000 yuan.', involves: ['Mei', 'the airline', '我'] }, result.accounts[1], clipped, ['Mei']);
@@ -157,4 +170,31 @@ test('the fold input and patch follow the Hermes plugin\'s structure update', ()
   assert.deepEqual(foldPatch(result.event, { change: false, plan: 'x' }, result.accounts[1], clipped), {});
   assert.deepEqual(jsonObject('Sure:\n```json\n{"change": false}\n```'), { change: false });
   assert.equal(jsonObject('no json here'), undefined);
+});
+
+test('an organizer run that calls a tool is not used, and words that keep failing are given up after three tries', async () => {
+  const world = setup({ change: true, plan: 'Written after a tool call.' });
+  writeFileSync(join(world.bin, 'tool'), '');
+  const codex = await connect(world.data, 'codex');
+  let receipt;
+  try {
+    receipt = await codex.call('event_note', { actor: { kind: 'agent', id: 'codex' }, text: 'Words whose fold calls a tool', title: 'A tool call, 2026' });
+  } finally {
+    await codex.close();
+  }
+  enable(world);
+  mkdirSync(join(world.data, 'organizer'), { recursive: true });
+  writeFileSync(join(world.data, 'organizer', 'state.json'), JSON.stringify({ sweepCheckpoint: '2000-01-01T00:00:00.000Z', done: {} }));
+  for (let run = 1; run <= 4; run += 1) {
+    writeFileSync(join(world.data, 'repository.json'), readFileSync(join(world.data, 'repository.json')));
+    const state = JSON.parse(readFileSync(join(world.data, 'organizer', 'state.json'), 'utf8'));
+    delete state.sweptMark;
+    writeFileSync(join(world.data, 'organizer', 'state.json'), JSON.stringify({ ...state, sweepCheckpoint: '2000-01-01T00:00:00.000Z' }));
+    await runSweep(world.data);
+  }
+  assert.equal(world.calls().length, 3, 'tried three times, then given up');
+  const repository = JSON.parse(readFileSync(join(world.data, 'repository.json'), 'utf8'));
+  assert.equal(repository.events.find((item) => item.event.id === receipt.eventId).event.facts, undefined, 'nothing written');
+  assert.match(readFileSync(join(world.data, 'organizer', 'log.jsonl'), 'utf8'), /called 1 tool, so its answer is not used/);
+  assert.equal(JSON.parse(readFileSync(join(world.data, 'organizer', 'state.json'), 'utf8')).done[receipt.accountId], 'gave up');
 });

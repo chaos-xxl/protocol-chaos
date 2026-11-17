@@ -722,6 +722,7 @@ async function setupOrganizer(ctx, state, options) {
   // Hermes's plugin folds the words it records itself; the daily sweep catches any it missed.
   if (connected.includes('hermes')) config.selfOrganizing = ['hermes'];
   if (pick === 'claude-code') Object.assign(config, { model: 'haiku', budgetUsd: 0.2 });
+  if (pick === 'dsh') Object.assign(config, { provider: 'deepseek-official', model: 'deepseek-flash', effort: 'off' });
   const text = `${JSON.stringify(config, null, 2)}\n`;
   writeAtomic(join(ctx.data, ORGANIZER_FILE), text, 0o600);
   // Words recorded before now are not organized: the sweep starts from here.

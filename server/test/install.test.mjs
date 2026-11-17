@@ -107,7 +107,7 @@ test('init connects Claude Code, Codex and DeepSeek Harness, and uninstall puts 
   assert.ok(patch.includes("args: ['--client', 'dsh', '--tools', 'writer']"));
 
   const organizer = JSON.parse(read(join(home, '.protocol-chaos', 'organizer.json')));
-  assert.deepEqual(organizer, { agent: 'dsh', command: join(home, 'bin', 'dsh'), actor: 'organizer', enabled: true }, 'DeepSeek Harness organizes first');
+  assert.deepEqual(organizer, { agent: 'dsh', command: join(home, 'bin', 'dsh'), actor: 'organizer', enabled: true, provider: 'deepseek-official', model: 'deepseek-flash', effort: 'off' }, 'DeepSeek Harness organizes first, with a small model and thinking off');
   assert.match(first.out, /Organizing in the background: DeepSeek Harness \(dsh --profile headless\)/);
   assert.match(first.out, /The daily sweep was not scheduled: HOME is not your home folder/, 'a test home never reaches the real scheduler');
 
