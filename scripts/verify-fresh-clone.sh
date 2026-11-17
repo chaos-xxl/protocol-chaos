@@ -81,7 +81,9 @@ while IFS= read -r file; do
       broken=1
     fi
   done < <(grep -oE '\]\([^)]+\)' "$file" | sed -E 's/^\]\((.*)\)$/\1/')
-done < <(git ls-files '*.md')
+# The experiment's prompts are text given to models, not documents: a "[title](file)" in them
+# shows a model a format. They are hashed into every run, so they are not edited to please this check.
+done < <(git ls-files '*.md' ':!eval/prompts/')
 [ "$broken" = "0" ] || fail "broken links"
 printf '  ok  every relative link resolves\n'
 
