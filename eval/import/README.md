@@ -27,4 +27,5 @@ It calls the model directly, at temperature 0, instead of through an agent's hea
 
 ## Changes
 
+- **2026-11-18, later: the rules say three things more** (an aim written among background facts is a matter; a sentence that only shares a word or a theme with a matter is not about it; an existing matter under none can be given a parent), and quotes are matched without the spaces, markdown marks and end marks a model adds or drops. Run again: 7 of 7, 6 matters, none left out; 967 tokens in, 640 out.
 - **2026-11-18: the check for the long-term goal was changed after the first run.** It looked for 财务自由 or "financial independence" in a title; the model titled the matter 财务独立（40岁前）, the other common Chinese word for it, so the check and the one after it (a part under that matter) failed. They now accept 财务独立 too. The matters themselves were as the checks intended: the goal is there, and the sailing app sits under it.

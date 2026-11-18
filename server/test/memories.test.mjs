@@ -122,6 +122,9 @@ test('a background import writes what rests on the notes, folds its own fields, 
   assert.equal(state.run.created.length, 1, 'one new matter: the made-up one rests on no sentence, the studio is the one there');
   assert.deepEqual(state.run.noted, [existing.eventId]);
   assert.equal(state.run.dropped, 1);
+  const log = readFileSync(join(data, 'import', 'log.jsonl'), 'utf8');
+  assert.match(log, /"outcome":"written".*"dropped":1,"why":\{"quote":1,"title":0,"refused":0\}/, 'each part says what it wrote and why any was left out');
+  assert.ok(!log.includes(TRIP) && !log.includes('Nobody ever wrote'), 'counts only, never words');
 
   const trip = store.read((repo) => repo.getProtocol({ eventId: state.run.created[0], accounts: 'all' }));
   assert.equal(trip.event.title, '2027 年春天葡萄牙行（和朋友）');
@@ -134,7 +137,7 @@ test('a background import writes what rests on the notes, folds its own fields, 
   assert.equal(trip.event.metadata['dev.protocol-chaos/import'].run, state.run.id);
   const studio = store.read((repo) => repo.getProtocol({ eventId: existing.eventId, accounts: 'all' }));
   assert.equal(studio.accounts.length, 2, 'words added to the matter the repository held');
-  assert.equal(studio.accounts[1].text, `**${STUDIO}**`);
+  assert.equal(studio.accounts[1].text, STUDIO, 'as the notes word it, not as the model retyped it');
   assert.equal(studio.event.facts.constraint, 'Budget 8,000 yuan; done by June 2027', 'and the facts it lacked');
 
   assert.equal(importOffer(data), 'done');
@@ -214,6 +217,55 @@ test('words a later part adds to a matter the import started are not counted as 
   assert.equal(report.report.newMatters, 1);
   assert.equal(report.report.wordsAddedToExisting, 0, 'the repository held no matter before the import');
   assert.equal((await undoImport(data)).noted, 0);
+});
+
+test('a quote the model retyped is found, and kept as the notes word it', async () => {
+  const { data } = freshHome();
+  const store = new Store(data);
+  const notes = [
+    '# Sam',
+    '',
+    '- **目标**：3–5 年内在杭州买一套小房子',
+    '- **日语**：2025 年考过 N3，目标 N1，重点练听力',
+    '- 结论是 **slow travel ≠ cheap travel**。',
+  ].join('\n');
+  const chunk = { parts: [{ via: 'Kiro steering: sam.md', mtime: '2026-10-15T03:54:00.000Z', text: notes }] };
+  const answer = { matters: [
+    { ref: 'm1', title: '杭州买房（3–5 年内）', quotes: ['**目标**：3-5年内在杭州买一套小房子。'] },
+    { ref: 'm2', title: '日语考到 N1', quotes: ['日语:2025年考过N3,目标N1,重点练听力'] },
+    { ref: 'm3', title: 'Slow travel', quotes: ['结论是 slow travel ≠ cheap travel。'] },
+    { ref: 'm4', title: 'Invented', quotes: ['3 年内就要搬去海边'] },
+    { ref: 'm5', title: null, quotes: ['**目标**：3–5 年内在杭州买一套小房子'] },
+  ] };
+  const out = await applyExtraction(store, chunk, answer, { runId: 'imp_retyped' });
+  assert.equal(out.created.length, 3);
+  assert.deepEqual(out.why, { quote: 1, title: 1, refused: 0 }, 'a quote that is not in the notes, and a new matter without a title, are left out');
+  const words = out.created.map((eventId) => store.read((repo) => repo.getProtocol({ eventId, accounts: 'all' })).accounts[0].text);
+  assert.deepEqual(words, [
+    '**目标**：3–5 年内在杭州买一套小房子',
+    '**日语**：2025 年考过 N3，目标 N1，重点练听力',
+    '结论是 **slow travel ≠ cheap travel**。',
+  ], 'the dash, spaces, full stop and full-width marks of the notes, not those of the model');
+});
+
+test('a later part puts a matter the import started under a larger one; a matter the repository held stays where it was', async () => {
+  const { data } = freshHome();
+  const store = new Store(data);
+  const old = await store.write((repo) => repo.eventNote({ actor: { kind: 'agent', id: 'kiro' }, text: 'I keep a photo blog.', title: 'Photo blog' }));
+  const first = { parts: [{ via: 'Claude Code memory: icons.md', mtime: '2026-06-29T07:42:00.000Z', text: 'Pixel icon set: 120 icons in a retro style, free to use.' }] };
+  const one = await applyExtraction(store, first, { matters: [{ ref: 'm1', title: 'Pixel icon set', quotes: ['Pixel icon set: 120 icons in a retro style, free to use.'] }] }, { runId: 'imp_link' });
+  const [icons] = one.created;
+  const second = { parts: [{ via: 'Kiro steering: sam.md', mtime: '2026-10-15T03:54:00.000Z', text: 'A portfolio site by next summer. The pixel icon set is one of its two pieces. The photo blog is the other.' }] };
+  const two = await applyExtraction(store, second, { matters: [
+    { ref: 'm1', title: 'Portfolio site by summer 2027', quotes: ['A portfolio site by next summer.'] },
+    { ref: 'm2', existing: icons, parent: 'm1', quotes: ['The pixel icon set is one of its two pieces.'] },
+    { ref: 'm3', existing: old.eventId, parent: 'm1', quotes: ['The photo blog is the other.'] },
+  ] }, { runId: 'imp_link' });
+  const [portfolio] = two.created;
+  assert.deepEqual(two.linked, [icons]);
+  assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: icons })).event.parents, [portfolio], 'the matter this import started earlier is put under the larger one');
+  assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: old.eventId })).event.parents, [], 'one the repository held before is not moved');
+  assert.deepEqual(two.noted.sort(), [old.eventId, icons].sort(), 'both get the words');
 });
 
 test('an import nobody answers is offered on three days, then no more', async () => {

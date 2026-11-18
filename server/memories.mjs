@@ -62,8 +62,8 @@ const PI_CONTEXT = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md',
 
 /** What the model is asked to do with one part of the notes. */
 export const IMPORT_RULES = [
-  "You are importing the user's long-lived matters into their personal repository, from the notes other assistants keep about them (memory files and standing instructions). You are given the open matters the repository holds already, and one part of those notes. List the matters these notes show: what the user would still consider unfinished a month from now (a project, a plan, a commitment, a purchase, a trip, a target, an arrangement) and long-horizon aims, including ones set aside or finished when the notes say so. Not a matter: who the user is, their background, tastes and habits; rules for how an assistant should work, write or code; one-off facts; anything the notes only guess at. When the notes hold none, the list is empty.",
-  "For each matter, quotes: the sentences of the notes about it, copied character for character (they are kept as the record of where the matter came from: never reword, translate, shorten or join them), at most five, each a whole sentence or line. existing: the id of the repository's matter it is, when it is one of them, else null. For a new one: title, what it is, and when or which where that tells it apart, in the language of the notes, at most 60 characters; ref, a short handle such as m1; parent, the existing id or the ref of the larger matter it is plainly part of or a step toward, else null. Group them as the user would: a broad aim with its concrete parts under it, not one matter per sentence; a part that only repeats its parent is not a matter of its own.",
+  "You are importing the user's long-lived matters into their personal repository, from the notes other assistants keep about them (memory files and standing instructions). You are given the open matters the repository holds already, and one part of those notes. List the matters these notes show: what the user would still consider unfinished a month from now (a project, a plan, a commitment, a purchase, a trip, a target, an arrangement) and long-horizon aims, including ones set aside or finished when the notes say so. Not a matter: who the user is, their background, tastes and habits; rules for how an assistant should work, write or code; one-off facts; anything the notes only guess at. An aim, plan or target written among such facts (in a profile, under a heading such as background, career or finances) is a matter all the same. When the notes hold none, the list is empty.",
+  "For each matter, quotes: the sentences of the notes about it, copied character for character (they are kept as the record of where the matter came from: never reword, translate, shorten or join them), at most five, each a whole sentence or line. A sentence that only shares a word or a theme with a matter is not about it. existing: the id of the repository's matter it is, when it is one of them, else null. For a new one: title, what it is, and when or which where that tells it apart, in the language of the notes, at most 60 characters; ref, a short handle such as m1. parent: the existing id or the ref of the larger matter it is plainly part of or a step toward, else null; for an existing matter, give it only when the repository shows that matter under no larger one. Group them as the user would: a broad aim with its concrete parts under it, not one matter per sentence; a part that only repeats its parent is not a matter of its own.",
   'Fields of a new matter, only what the notes say, in the language of the notes, each clear on its own, or null: goal (what it is meant to achieve, including what would count as done), constraint (limits, deadlines, budgets, wishes and preferences), plan (the arrangement as decided: when, where, how, which option), progress (where it stands, in one short sentence), state (active, waiting, dormant, done or cancelled; null when unclear). Write relative times as concrete dates when the notes date them; otherwise keep them as written. Never write "the user"; write the facts themselves. For an existing matter, give its quotes, and only the fields the notes add.',
 ].join('\n\n');
 
@@ -530,32 +530,95 @@ export function partInput(chunk, index, of, entries, now = new Date()) {
 const normalize = (text) => String(text).replace(/[*`#>]+/g, '').replace(/\s+/g, ' ').trim();
 const text = (value, limit) => (typeof value === 'string' && value.trim() ? clip(value, limit) : undefined);
 
-/** The quotes that are in the part, grouped by the file they are in: [{ via, mtime, text }]. */
+/**
+ * One character as quotes are matched on it. Models retype what they copy: they drop markdown
+ * marks and spaces, swap dashes, quote marks and full-width forms, and add a full stop. None of
+ * that is in the matching, so a quote is found where the notes say the same thing.
+ */
+function looseChar(char) {
+  if (/[\s*`#>]/u.test(char)) return '';
+  const form = char.normalize('NFKC');
+  // Dashes, and the tildes that write a range such as 35~40.
+  if (/^[~\u2010-\u2015\u2212\u2E3A\u2E3B\u301C\uFE58\uFE63]$/u.test(form)) return '-';
+  if (/^["\u201C-\u201F\u2033\u00AB\u00BB\u300C-\u300F]$/u.test(form)) return '"';
+  if (/^['\u2018-\u201B\u2032]$/u.test(form)) return "'";
+  return form.toLowerCase();
+}
+
+/** The text as matched, with where each of its characters came from in the text. */
+function loosen(original) {
+  let loose = '';
+  const starts = [];
+  const ends = [];
+  let index = 0;
+  for (const char of original) {
+    for (const piece of looseChar(char)) {
+      loose += piece;
+      for (let unit = 0; unit < piece.length; unit += 1) {
+        starts.push(index);
+        ends.push(index + char.length);
+      }
+    }
+    index += char.length;
+  }
+  return { text: original, loose, starts, ends };
+}
+
+const END_MARKS = /[。.,、;:!?]+$/u;
+
+/** Where the notes say what the quote says: those words of the notes, as written there, or undefined. */
+function inNotes(notes, quote) {
+  const whole = loosen(quote).loose;
+  const core = whole.replace(END_MARKS, '');
+  if (core.length < 4 || core.length > 1500) return undefined;
+  const at = notes.loose.indexOf(core);
+  if (at < 0) return undefined;
+  let start = notes.starts[at];
+  let end = notes.ends[at + core.length - 1];
+  // A **bold** or `code` mark the words open or close without the other one is taken in from
+  // beside them; then the end marks the quote has where the notes have them too.
+  for (const mark of ['**', '`']) {
+    if ((notes.text.slice(start, end).split(mark).length - 1) % 2 === 0) continue;
+    if (notes.text.slice(start - mark.length, start) === mark) start -= mark.length;
+    else if (notes.text.slice(end, end + mark.length) === mark) end += mark.length;
+  }
+  for (const mark of whole.slice(core.length)) {
+    if (end >= notes.text.length || looseChar(notes.text[end]) !== mark) break;
+    end += 1;
+  }
+  return notes.text.slice(start, end).trim();
+}
+
+/** The quotes that are in the part, as the notes word them, grouped by the file they are in: [{ via, mtime, text }]. */
 function groundedQuotes(chunk, quotes) {
   if (!Array.isArray(quotes)) return [];
-  const parts = chunk.parts.map((part) => ({ part, flat: normalize(part.text), quotes: [] }));
+  const parts = chunk.parts.map((part) => ({ part, notes: loosen(part.text), quotes: [] }));
   const seen = new Set();
   let kept = 0;
   for (const quote of quotes) {
     if (typeof quote !== 'string' || kept >= MAX_QUOTES) continue;
-    const flat = normalize(quote);
-    if (flat.length < 4 || flat.length > 1500 || seen.has(flat)) continue;
-    const home = parts.find((candidate) => candidate.flat.includes(flat));
-    if (!home) continue;
-    seen.add(flat);
-    home.quotes.push(quote.trim());
-    kept += 1;
+    for (const candidate of parts) {
+      const words = inNotes(candidate.notes, quote);
+      if (!words) continue;
+      if (!seen.has(words)) {
+        seen.add(words);
+        candidate.quotes.push(words);
+        kept += 1;
+      }
+      break;
+    }
   }
   return parts.filter((candidate) => candidate.quotes.length).map(({ part, quotes: found }) => ({ via: part.via, mtime: part.mtime, text: found.join('\n') }));
 }
 
 /**
  * Writes what the model listed for one part: new matters (parents first) with their fields,
- * words on matters the repository holds. A matter none of whose quotes is in the part, or a
- * new one without a title, is left out. Returns { created, noted, dropped }.
+ * words on matters the repository holds, and a larger matter for one this import started under
+ * none. A matter none of whose quotes is in the part, or a new one without a title, is left out.
+ * Returns { created, noted, linked, dropped, why }: why counts the left out by reason, without words.
  */
 export async function applyExtraction(store, chunk, answer, { runId, now = new Date() } = {}) {
-  const out = { created: [], noted: [], dropped: 0 };
+  const out = { created: [], noted: [], linked: [], dropped: 0, why: { quote: 0, title: 0, refused: 0 } };
   const listed = Array.isArray(answer?.matters) ? answer.matters.slice(0, MAX_MATTERS) : [];
   const entries = store.read((repo) => repo.contextPack({}).events);
   const known = new Map(entries.map((entry) => [entry.id, entry]));
@@ -568,6 +631,7 @@ export async function applyExtraction(store, chunk, answer, { runId, now = new D
     if (!existing && title && byTitle.has(normalize(title).toLowerCase())) existing = byTitle.get(normalize(title).toLowerCase());
     if (!groups.length || (!existing && !title)) {
       out.dropped += 1;
+      out.why[groups.length ? 'title' : 'quote'] += 1;
       return;
     }
     const facts = {};
@@ -602,6 +666,8 @@ export async function applyExtraction(store, chunk, answer, { runId, now = new D
       if (same) {
         idOf.set(item.ref, same);
         if (await addWords(store, same, item)) out.noted.push(same);
+        const parentId = item.parent && known.has(item.parent) ? item.parent : idOf.get(item.parent);
+        if (parentId && parentId !== same && await linkStarted(store, same, parentId, item, runId)) out.linked.push(same);
         continue;
       }
       const parentId = item.parent && known.has(item.parent) ? item.parent : idOf.get(item.parent);
@@ -627,9 +693,30 @@ export async function applyExtraction(store, chunk, answer, { runId, now = new D
     } catch (error) {
       if (!(error instanceof ProtocolError)) throw error;
       out.dropped += 1;
+      out.why.refused += 1;
     }
   }
   return out;
+}
+
+/**
+ * Puts a matter this import started, under no larger matter yet, under the one a later part of
+ * the notes names, grounded on the words of the notes about it. Matters the repository held
+ * before are left where they are. Returns whether it linked them.
+ */
+async function linkStarted(store, eventId, parentId, item, runId) {
+  const current = store.read((repo) => repo.getProtocol({ eventId, accounts: 'all' }));
+  if (current.event.parents?.length || current.event.metadata?.[IMPORT_KEY]?.run !== runId) return false;
+  const texts = new Set(item.groups.map((group) => group.text));
+  const sources = current.accounts.filter((account) => texts.has(account.text)).map((account) => account.id);
+  if (!sources.length) return false;
+  try {
+    await store.write((repo) => repo.addParent({ childEventId: eventId, parentEventId: parentId, actor: ACTOR, sourceAccountIds: sources }));
+    return true;
+  } catch (error) {
+    if (!(error instanceof ProtocolError)) throw error; // a cycle, say: it stays where it is
+    return false;
+  }
 }
 
 /** Adds the words to a matter that has not got them yet, and fills in the facts it lacks. */
@@ -887,6 +974,8 @@ export async function runImport(directory, { env = process.env, ask = askModel, 
         state.run.created.push(...result.created);
         state.run.noted.push(...result.noted);
         state.run.dropped += result.dropped;
+        // Counts only, as everywhere in this log: what was written and why any was left out.
+        log(directory, { run: state.run.id, part: index + 1, outcome: 'written', created: result.created.length, noted: result.noted.length, linked: result.linked.length, dropped: result.dropped, why: result.why });
       }
       state.run.chunk = index + 1;
       state.run.updatedAt = now().toISOString();
@@ -1010,7 +1099,7 @@ export async function memoriesTool(directory, input, { env = process.env, entry 
       state.run.created.push(...result.created);
       state.run.noted.push(...result.noted);
       state.run.dropped += result.dropped;
-      state.run.recorded = { created: result.created.length, noted: result.noted.length, dropped: result.dropped };
+      state.run.recorded = { created: result.created.length, noted: result.noted.length, linked: result.linked.length, dropped: result.dropped, why: result.why };
     }
     state.run.chunk = expected;
     state.run.of = plan.chunks.length;

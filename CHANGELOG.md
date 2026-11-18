@@ -2,6 +2,16 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
+## Unreleased
+
+From importing a real set of memory files (8 files, about 24,000 characters), whose largest aim was missing from the result:
+
+- **A quote the model retyped is found.** The model's copy of a sentence is looked for without the spaces, markdown marks and end marks it added or dropped, and with dashes, quote marks and full-width forms counted as one: a line copied with a full stop the notes do not have, `3-5` for `3–5`, or `8000元` for `8000 元` no longer leaves its matter out. What is written is the sentence as the notes word it, no longer the model's copy.
+- **The rules say three things more.** An aim, plan or target written among background facts (a profile's career or finances, say) is a matter. A sentence that only shares a word or a theme with a matter is not about it. An existing matter can be given a parent when the repository shows it under none.
+- **A later part can put a matter an earlier part started under a larger one.** When the notes name the larger matter only further on, the import links the two, grounded on the words about it; matters the repository held before the import are not moved.
+- The import's log says, for each part, how many matters were written and how many left out and why (no sentence of the notes, no title, or a write refused), still without words.
+- **The organizer's answer is decoded as one stream.** A character whose bytes came in two chunks of the agent's output was read as broken characters (`���`): in the second real import, one title. Long answers, as an import's are, came in several chunks; a fold's answer is short, so it was hit only rarely.
+
 ## protocol-chaos 0.2.6 (2026-11-18)
 
 - **`init` connects OpenCode, OpenClaw, Claude Desktop, GitHub Copilot and Pi.**
