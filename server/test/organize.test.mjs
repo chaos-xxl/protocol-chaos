@@ -10,7 +10,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { foldInput, foldPatch, jsonObject, runSweep } from '../organize.mjs';
+import { askModel, foldInput, foldPatch, jsonObject, runSweep } from '../organize.mjs';
 
 const SERVER = fileURLToPath(new URL('../index.mjs', import.meta.url));
 const folders = [];
@@ -74,6 +74,26 @@ async function until(check, ms = 15_000) {
     await new Promise((done) => setTimeout(done, 100));
   }
 }
+
+// A stand-in that writes its answer in two pieces, the first ending inside the bytes of a character.
+const SPLIT_AGENT = `#!/usr/bin/env node
+process.stdin.resume();
+process.stdin.on('end', () => {
+  const line = JSON.stringify({ type: 'final', reason: { kind: 'completed' }, text: '{"change": true, "title": "学做陶艺（周末有空为前提）"}' }) + '\\n';
+  const bytes = Buffer.from(line, 'utf8');
+  const cut = bytes.indexOf(Buffer.from('提', 'utf8')) + 1;
+  process.stdout.write(bytes.subarray(0, cut), () => setTimeout(() => process.stdout.write(bytes.subarray(cut)), 100));
+});
+`;
+
+test('an answer whose characters arrive split across two chunks is read whole', async () => {
+  const world = setup({});
+  writeFileSync(join(world.bin, 'dsh'), SPLIT_AGENT);
+  chmodSync(join(world.bin, 'dsh'), 0o755);
+  const reply = await askModel(world.data, world.config, 'rules', 'input');
+  assert.equal(reply.error, undefined, reply.error);
+  assert.equal(jsonObject(reply.text).title, '学做陶艺（周末有空为前提）');
+});
 
 const WORDS = 'I want to repaint the hallway grey before Christmas, my sister will help';
 

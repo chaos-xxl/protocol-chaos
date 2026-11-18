@@ -464,6 +464,9 @@ export function askModel(directory, config, instructions, input) {
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGTERM'), MODEL_TIMEOUT_MS);
+    // Decoded as a stream: a character whose bytes two chunks split stays one character.
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('error', (error) => {
