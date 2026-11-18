@@ -2,7 +2,7 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
-## Unreleased
+## protocol-chaos 0.2.7 (2026-11-18)
 
 From importing a real set of memory files (8 files, about 24,000 characters), whose largest aim was missing from the result:
 
