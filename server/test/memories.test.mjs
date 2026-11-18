@@ -11,7 +11,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { instructions } from '../instructions.mjs';
 import {
-  applyExtraction, findSources, importOffer, LINK_INSTRUCTIONS, makeChunks, memoriesTool, partInput, pendImport, planImport, readImport, redact, renderTree, runImport, undoImport,
+  applyExtraction, applyLinks, findSources, importOffer, LINK_INSTRUCTIONS, linkInput, makeChunks, memoriesTool, partInput, pendImport, planImport, readImport, redact, renderTree, runImport, undoImport,
 } from '../memories.mjs';
 import { runSweep } from '../organize.mjs';
 import { Store } from '../store.mjs';
@@ -309,7 +309,7 @@ test('after the parts, one more call puts what they wrote apart under the larger
   await memoriesTool(data, { action: 'start' }, { env, store, spawnWorker: false });
   const calls = [];
   const ask = async (directory, config, rules, input) => {
-    calls.push({ rules, input });
+    calls.push({ rules, input, config });
     if (rules === LINK_INSTRUCTIONS) {
       const id = (title) => new RegExp(`- (evt_[\\w-]+): ${title}`).exec(input)?.[1];
       return { text: JSON.stringify({ links: [
@@ -329,6 +329,8 @@ test('after the parts, one more call puts what they wrote apart under the larger
   assert.notEqual(parts.findIndex((call) => call.input.includes(ICONS)), parts.findIndex((call) => call.input.includes(GOAL)), 'the two are in two parts');
   const last = calls.at(-1);
   assert.equal(last.rules, LINK_INSTRUCTIONS, 'the call that puts them together comes after the parts');
+  assert.equal(last.config.effort, 'high', 'DeepSeek Harness thinks on that call');
+  assert.ok(parts.every((call) => call.config.effort === undefined), 'and not on the parts');
   assert.match(last.input, /sit under no larger matter[\s\S]*Pixel icon set[\s\S]*A year off by 2030[\s\S]*other open matters[\s\S]*Photo blog/);
   const state = readImport(data);
   const [icons, goal] = state.run.created;
@@ -344,6 +346,33 @@ test('after the parts, one more call puts what they wrote apart under the larger
   const undone = await undoImport(data);
   assert.equal(undone.cancelled, 2);
   assert.equal(store.read((repo) => repo.getProtocol({ eventId: blog.eventId })).event.state, 'emerging');
+});
+
+test('the call after the parts sees the heading a matter sits under, and a heading can be the reason for a link', async () => {
+  const { data } = freshHome();
+  const store = new Store(data);
+  const notes = ['# Sam', '', '## Money plan', '', '- Goal: retire early, by 45.', '- An electric car next year, about 200,000 yuan.', '', '## Hobbies', '', '- Learning the cello.'].join('\n');
+  const files = [{ via: 'Kiro steering: sam.md', text: notes }];
+  const chunk = { parts: [{ via: 'Kiro steering: sam.md', mtime: '2026-11-01T00:00:00.000Z', text: notes }] };
+  const out = await applyExtraction(store, chunk, { matters: [
+    { ref: 'm1', title: 'Retire early by 45', quotes: ['Goal: retire early, by 45.'] },
+    { ref: 'm2', title: 'Electric car, 2027', quotes: ['An electric car next year, about 200,000 yuan.'] },
+    { ref: 'm3', title: 'Cello', quotes: ['Learning the cello.'] },
+  ] }, { runId: 'imp_heading' });
+  const [aim, car, cello] = out.created;
+  const input = linkInput(store, out.created, new Date('2026-11-18T09:00:00Z'), files);
+  assert.match(input, /Electric car, 2027 \(emerging\); Kiro steering: sam\.md, under the heading "Money plan"/);
+  assert.match(input, /Cello \(emerging\); Kiro steering: sam\.md, under the heading "Hobbies"/);
+  const result = await applyLinks(store, { links: [
+    { child: car, parent: aim, because: 'Retire early by 45 / Money plan' },
+    { child: cello, parent: aim, because: 'a hobby that pays' },
+    { child: cello, parent: aim, because: 'Retire early by 45 / Cello' },
+  ] }, { runId: 'imp_heading', created: out.created, files });
+  assert.deepEqual(result.linked, [car], 'the heading both sit under is in the notes; the title of the parent is no fault');
+  assert.equal(result.unsaid, 2, 'a reason that is nowhere in the notes is not, nor the two titles alone');
+  const link = store.read((repo) => repo.getRevisions({ eventId: car })).revisions.find((revision) => revision.type === 'parent.added');
+  const carWords = store.read((repo) => repo.getProtocol({ eventId: car, accounts: 'all' })).accounts.map((account) => account.id);
+  assert.deepEqual(link.sourceAccountIds, carWords.slice(0, 1), 'a reason found only in the file rests on the child\'s own words');
 });
 
 test('an import nobody answers is offered on three days, then no more', async () => {

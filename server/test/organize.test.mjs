@@ -3,7 +3,7 @@
 // organizer's own runs cannot start it again; the sweep folds what nobody folded and calls no
 // model when nothing changed; and the log never holds the words.
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -135,6 +135,8 @@ test('recorded words are folded into their matter in the background, grounded on
   assert.match(call.overlay, /- id: credentials\n {2}disabled: false/, 'the keys saved in the app are used');
   for (const id of ['tool-bash', 'tool-fs', 'tool-web', 'session-title-llm', 'session-log-deepseek', 'session-persistence-jsonl']) assert.match(call.overlay, new RegExp(`- id: ${id}\\n {2}disabled: true`));
   assert.match(call.overlay, /model: 'deepseek-flash'\n {4}reasoningEffort: 'off'/);
+  assert.match(call.args[call.args.indexOf('--patch') + 1], /dsh-overlay-\d+-\d+-\w+\.yml$/, 'one overlay file per run');
+  assert.ok(!readdirSync(join(world.data, 'organizer')).some((name) => name.startsWith('dsh-overlay')), 'and it is removed after the run');
   assert.ok(call.input.includes(WORDS) && call.input.includes('The matter now:') && call.input.includes('Answer with one JSON object'));
   assert.equal(call.organizing, '1', 'whatever the organizer\'s agent starts knows it is the organizer');
   const log = readFileSync(join(world.data, 'organizer', 'log.jsonl'), 'utf8');

@@ -62,7 +62,6 @@ function paths(directory) {
     lock: join(home, 'run.lock'),
     state: join(home, 'state.json'),
     log: join(home, 'log.jsonl'),
-    overlay: join(home, 'dsh-overlay.yml'),
   };
 }
 
@@ -464,7 +463,8 @@ function invocation(directory, config, instructions, input) {
     };
   }
   if (config.agent === 'dsh') {
-    const { overlay } = paths(directory);
+    // One file per run: an import's call with thinking and a fold without it may run at the same time.
+    const overlay = join(paths(directory).home, `dsh-overlay-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.yml`);
     writeFileSync(overlay, dshOverlay(config), { mode: 0o600 });
     return {
       command,
@@ -472,6 +472,7 @@ function invocation(directory, config, instructions, input) {
       args: ['--profile', config.profile ?? 'headless', '--patch', overlay, '--permission-mode', 'read-only', '--approval-policy', 'never', '--json', '-'],
       input: `${instructions}\n\n----\n\n${input}`,
       read: readDshEvents,
+      cleanup: overlay,
     };
   }
   if (config.agent === 'codex') {
@@ -511,18 +512,23 @@ export function askModel(directory, config, instructions, input) {
     const child = spawn(call.command, call.args, { cwd: paths(directory).home, env: { ...process.env, PROTOCOL_CHAOS_ORGANIZING: '1' }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGTERM'), MODEL_TIMEOUT_MS);
+    const timer = setTimeout(() => child.kill('SIGTERM'), Number.isFinite(config.timeoutMs) ? config.timeoutMs : MODEL_TIMEOUT_MS);
     // Decoded as a stream: a character whose bytes two chunks split stays one character.
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const tidy = () => {
+      if (call.cleanup) rmSync(call.cleanup, { force: true });
+    };
     child.on('error', (error) => {
       clearTimeout(timer);
+      tidy();
       done({ error: `${call.command} could not run: ${error.message}`, ms: Date.now() - started });
     });
     child.on('close', (code, signal) => {
       clearTimeout(timer);
+      tidy();
       const ms = Date.now() - started;
       if (code !== 0) {
         const detail = clip(`${stderr} ${stdout}`.replace(/(sk-|pc_|Bearer )[A-Za-z0-9._-]+/g, '$1…'), 300);

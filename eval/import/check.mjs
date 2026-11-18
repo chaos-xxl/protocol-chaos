@@ -21,6 +21,8 @@ const list = JSON.parse(readFileSync(resolve(values.models), 'utf8'));
 const model = (list.models ?? list).find((item) => item.id === values.model);
 if (!model) throw new Error(`No model ${values.model} in ${values.models}`);
 const provider = createProvider({ ...model, body: { ...(model.body ?? {}), temperature: 0 } });
+// The call after the parts thinks, as DeepSeek Harness's does in a real import (LINK_EFFORT).
+const thinking = createProvider({ ...model, body: { ...(model.body ?? {}), thinking: { type: 'enabled' } } });
 
 // Invented notes, as three assistants keep them.
 const NOTES = {
@@ -80,10 +82,11 @@ const CHECKS = [
   ['nothing resting on a taste or a belief', (events) => !events.some((e) => e.accounts.some((a) => /filmic|to-do apps/i.test(a.text)))],
   ['the old icon pack, as one matter without its to-dos', (events) => events.some((e) => /icon|图标/i.test(e.title))
     && events.filter((e) => e.accounts.some((a) => a.via.includes('project-icons.md'))).length <= 2],
-  // Added with the call after the parts: the notes tie the free icon pack to no aim.
-  ['the icon pack, not put under financial independence', (events) => {
+  // Added with the call after the parts, which links generously: a trip and a hobby set aside are
+  // not parts of financial independence.
+  ['the trip and the cello, not put under financial independence', (events) => {
     const aim = events.find((e) => AIM.test(e.title));
-    return !events.some((e) => /icon|图标/i.test(e.title) && aim && e.parents.includes(aim.id));
+    return !events.some((e) => /Lisbon|里斯本|葡萄牙|cello|大提琴/i.test(e.title) && aim && e.parents.includes(aim.id));
   }],
 ];
 const OLD = { file: '.claude/projects/-home-sam-icons/memory/project-icons.md', at: new Date('2026-05-01T08:00:00Z') };
@@ -105,8 +108,8 @@ try {
   let dropped = 0;
   const created = [];
   const today = new Date('2026-11-18T09:00:00Z');
-  const ask = async (rules, text, conversationId) => {
-    const answer = await provider.complete([{ role: 'system', content: rules }, { role: 'user', content: text }], [], { conversationId });
+  const ask = async (rules, text, conversationId, via = provider) => {
+    const answer = await via.complete([{ role: 'system', content: rules }, { role: 'user', content: text }], [], { conversationId });
     input += answer.usage?.input ?? 0;
     output += answer.usage?.output ?? 0;
     const parsed = jsonObject(answer.message?.content ?? '');
@@ -121,8 +124,8 @@ try {
     dropped += result.dropped;
   }
   // The call after the parts that puts together what they wrote apart, as in the background.
-  const linking = linkInput(store, created, today);
-  const linked = linking ? (await applyLinks(store, await ask(LINK_INSTRUCTIONS, linking, 'import-check-links'), { runId: 'check', created })).linked.length : 0;
+  const linking = linkInput(store, created, today, plan.files);
+  const linked = linking ? (await applyLinks(store, await ask(LINK_INSTRUCTIONS, linking, 'import-check-links', thinking), { runId: 'check', created, files: plan.files })).linked.length : 0;
   const events = store.read((repo) => repo.contextPack({}).events).map((entry) => store.read((repo) => repo.getProtocol({ eventId: entry.id, accounts: 'all' })))
     .map(({ event, accounts }) => ({ ...event, accounts }));
   for (const event of events) {

@@ -48,6 +48,10 @@ const MAX_OFFER_DAYS = 3;
 const DIRECTORY_SHOWN = 150;
 const STARTING_GRACE_MS = 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+// How hard DeepSeek Harness thinks on the call after the parts (off, low, high or max), and how
+// long that call may take. In real imports it thought for 11,000 to 14,000 tokens, in 60 to 80 s.
+const LINK_EFFORT = 'high';
+const LINK_TIMEOUT_MS = 10 * 60_000;
 // A memory file not changed for this long: its projects are imported, not its to-dos.
 const STALE_MS = 90 * DAY_MS;
 const OPEN = ['emerging', 'active', 'waiting', 'dormant'];
@@ -66,7 +70,7 @@ const PI_CONTEXT = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md',
 /** What the model is asked to do with one part of the notes. */
 export const IMPORT_RULES = [
   "You are importing the user's long-lived matters into their personal repository, from the notes other assistants keep about them (memory files and standing instructions). You are given the open matters the repository holds already, and one part of those notes. List the matters these notes show: what the user would still consider unfinished a month from now (a project, a plan, a commitment, a purchase, a trip, a target, an arrangement) and long-horizon aims, including ones set aside or finished when the notes say so (a review passed, a renovation done). Not a matter: who the user is, their background, tastes and habits; a style or a direction they keep to; what they believe or have thought through (a judgment, a concept, a method); rules for how an assistant should work, write or code; one-off facts; anything the notes only guess at. An aim, plan or target written among such facts (in a profile, under a heading such as background, career or finances) is a matter all the same. When the notes hold none, the list is empty.",
-  "For each matter, quotes: the sentences of the notes about it, copied character for character (they are kept as the record of where the matter came from: never reword, translate, shorten or join them), at most five, each a whole sentence or line. A sentence that only shares a word or a theme with a matter is not about it. existing: the id of the repository's matter it is, when it is one of them, else null. For a new one: title, what it is, and when or which where that tells it apart, in the language of the notes, at most 60 characters; ref, a short handle such as m1. parent: the existing id or the ref of the larger matter it is plainly part of or a step toward, else null; for an existing matter, give it only when the repository shows that matter under no larger one. Group them as the user would: a broad aim with its concrete parts under it, not one matter per sentence; a part that only repeats its parent is not a matter of its own. When the notes state an aim and name matters of the repository as its parts or steps, the aim is a matter of its own and those matters go under it. A project's list of next steps or to-dos is its plan, not a matter each: a step is a matter of its own only when the notes give it something of its own (a date, a budget, people, how far it got). From a file not changed for 90 days or more (the part names them), write its projects and aims as matters and keep their steps and to-dos in the project's plan, never as matters of their own: they may be done or dropped since.",
+  "For each matter, quotes: the sentences of the notes about it, copied character for character (they are kept as the record of where the matter came from: never reword, translate, shorten or join them), at most five, each a whole sentence or line. A sentence that only shares a word or a theme with a matter is not about it. existing: the id of the repository's matter it is, when it is one of them, else null. For a new one: title, what it is, and when or which where that tells it apart, in the language of the notes, at most 60 characters; ref, a short handle such as m1. parent: the existing id or the ref of the larger matter it is plainly part of or a step toward, else null; for an existing matter, give it only when the repository shows that matter under no larger one. Group them as the user would: a broad aim with its concrete parts under it, not one matter per sentence; a part that only repeats its parent is not a matter of its own. When the notes state an aim and name matters of the repository as its parts or steps, the aim is a matter of its own and those matters go under it. A plan the notes discuss within an aim's section, or that the aim's words take into account, goes under that aim. A project's list of next steps or to-dos is its plan, not a matter each: a step is a matter of its own only when the notes give it something of its own (a date, a budget, people, how far it got). From a file not changed for 90 days or more (the part names them), write its projects and aims as matters and keep their steps and to-dos in the project's plan, never as matters of their own: they may be done or dropped since.",
   'Fields of a new matter, only what the notes say, in the language of the notes, each clear on its own, or null: goal (what it is meant to achieve, including what would count as done), constraint (limits, deadlines, budgets, wishes and preferences), plan (the arrangement as decided: when, where, how, which option), progress (where it stands, in one short sentence), state (active, waiting, dormant, done or cancelled; null when unclear). Write relative times as concrete dates when the notes date them; otherwise keep them as written. Never write "the user"; write the facts themselves. For an existing matter, give its quotes, and only the fields the notes add.',
 ].join('\n\n');
 
@@ -78,8 +82,8 @@ export const IMPORT_INSTRUCTIONS = `${IMPORT_RULES}\n\nAnswer with one JSON obje
  * so a larger aim and its parts may have been written apart; this puts them together.
  */
 export const LINK_INSTRUCTIONS = [
-  "You are putting matters just imported into the user's personal repository in their places. Each was written from one part of the notes the user's assistants keep, so a larger aim and its parts may have been written apart. You are given the matters this import started that sit under no larger matter, each with the words of the notes it rests on, and the repository's other open matters.",
-  "For each matter of the first list, name the larger matter it is part of or a step toward, from either list, only when the words say so: the child's words say it belongs to the parent or serves it (a second income for financial independence, say), or the parent's words name the child among its parts or steps. Give those words as because, copied from the words shown. Two separate things are siblings, not parent and child; matters whose words only share a word, a theme or a section of the notes are not linked; a matter the parent's words only mention, as a circumstance or an example, is not its part. When the words do not say so, leave it out.",
+  "You are putting matters just imported into the user's personal repository in their places. Each was written from one part of the notes the user's assistants keep, so a larger aim and its parts may have been written apart. You are given the matters this import started that sit under no larger matter, each with the file, the heading and the words of the notes it rests on, and the repository's other open matters.",
+  "For each matter of the first list, name the larger matter it belongs under, from either list, as the user would arrange their own life: a part of a project goes under the project; a plan, a purchase, a side project, a study or a life plan that bears on a long-horizon aim goes under that aim when the notes discuss it as part of the aim, list it under the aim's heading, or take it into account in the aim's words (a family plan that changes what an aim needs, a purchase in the financial plan). Two separate things of one kind are siblings, not parent and child (two trips, two courses); a matter that only shares a word with another is not part of it. Give as because the words that tie them, copied from the words or the headings shown; they may join words of both, one line or \" / \" apart.",
   'Answer with one JSON object and nothing else: {"links": [{"child": id, "parent": id, "because": string}]}, an empty list when there is none. Do not use any tool.',
 ].join('\n\n');
 
@@ -417,9 +421,10 @@ function estimate(chunks, openCount, mode, agent) {
   // In the background, one more call puts together what the parts wrote apart (LINK_INSTRUCTIONS).
   if (mode === 'background' && chunks.length) {
     const started = 4 * chunks.length;
-    input += tokensOf(LINK_INSTRUCTIONS) + CALL_OVERHEAD + 90 * started + 25 * Math.min(DIRECTORY_SHOWN, openCount);
-    output += 60 + 15 * started;
-    seconds += 6;
+    input += tokensOf(LINK_INSTRUCTIONS) + CALL_OVERHEAD + 120 * started + 25 * Math.min(DIRECTORY_SHOWN, openCount);
+    // DeepSeek Harness thinks on it (LINK_EFFORT): its thinking is counted as output.
+    output += 60 + 15 * started + (agent === 'dsh' ? 12_000 : 0);
+    seconds += agent === 'dsh' ? 75 : 6;
   }
   if (mode === 'conversation') seconds *= 1.5;
   if (agent === 'codex') seconds *= 2;
@@ -750,12 +755,22 @@ async function linkStarted(store, eventId, parentId, item, runId) {
   }
 }
 
+/** The markdown heading a sentence sits under in the file it came from, or undefined. */
+function headingOf(files, via, text) {
+  const file = files.find((candidate) => candidate.via === via);
+  const first = String(text ?? '').split('\n')[0];
+  const at = file && first ? file.text.indexOf(first) : -1;
+  if (at < 0) return undefined;
+  const line = file.text.slice(0, at).split('\n').reverse().find((candidate) => /^#{1,6}\s+\S/.test(candidate));
+  return line ? clip(line.replace(/^#{1,6}\s+/, '').replace(/[*`]/g, ''), 60) : undefined;
+}
+
 /**
  * What the model is shown after the parts: the matters this import started under no larger
- * matter, with the words each rests on, and the other open matters. Undefined when there is
- * nothing to put together.
+ * matter, with the file, the heading and the words each rests on, and the other open matters.
+ * Undefined when there is nothing to put together.
  */
-export function linkInput(store, created, now = new Date()) {
+export function linkInput(store, created, now = new Date(), files = []) {
   const loose = [];
   const looseIds = new Set();
   for (const eventId of created) {
@@ -768,8 +783,9 @@ export function linkInput(store, created, now = new Date()) {
     const { event, accounts } = found;
     if (event.state === 'cancelled' || event.parents?.length) continue;
     const words = accounts.find((account) => account.actor?.id === IMPORT_ACTOR) ?? accounts[0];
+    const heading = headingOf(files, words?.via, words?.text);
     looseIds.add(eventId);
-    loose.push(`- ${eventId}: ${clip(event.title ?? '(untitled)', 70)} (${event.state}); ${words?.via ?? 'the notes'}: "${clip(words?.text ?? '', 220)}"`);
+    loose.push(`- ${eventId}: ${clip(event.title ?? '(untitled)', 70)} (${event.state}); ${words?.via ?? 'the notes'}${heading ? `, under the heading "${heading}"` : ''}: "${clip(words?.text ?? '', 320)}"`);
   }
   const others = store.read((repo) => repo.contextPack({}).events)
     .filter((entry) => OPEN.includes(entry.state) && !looseIds.has(entry.id))
@@ -778,7 +794,7 @@ export function linkInput(store, created, now = new Date()) {
   if (!loose.length || loose.length + others.length < 2) return undefined;
   return [
     `Today is ${today(now)}.`, '',
-    'The matters this import started that sit under no larger matter (id: title, state; the file and words of the notes it rests on):',
+    'The matters this import started that sit under no larger matter (id: title, state; the file, heading and words of the notes it rests on):',
     ...loose.slice(0, 120), '',
     "The repository's other open matters (id: title, state; the larger matter it is part of):",
     ...(others.length ? others : ['(none)']),
@@ -788,12 +804,14 @@ export function linkInput(store, created, now = new Date()) {
 /**
  * Writes the links the model named after the parts. Only a matter this import started, under no
  * larger matter yet, is put under another, and only when the words the model gives as the reason
- * are in the words of the child or of the parent; the link rests on those words. Returns
- * { linked, skipped, unsaid }: unsaid counts the links whose reason is in neither.
+ * are in the notes: in the words of the child or of the parent, or in the files they came from
+ * (a heading, say). The link rests on the words that hold the reason, or else on the child's.
+ * Returns { linked, skipped, unsaid }: unsaid counts the links whose reason is in none of them.
  */
-export async function applyLinks(store, answer, { runId, created }) {
+export async function applyLinks(store, answer, { runId, created, files = [] }) {
   const out = { linked: [], skipped: 0, unsaid: 0 };
   const mine = new Set(created);
+  const notesOf = new Map(files.map((file) => [file.via, loosen(file.text)]));
   const links = Array.isArray(answer?.links) ? answer.links.slice(0, 200) : [];
   for (const link of links) {
     const child = typeof link?.child === 'string' ? link.child : undefined;
@@ -809,12 +827,22 @@ export async function applyLinks(store, answer, { runId, created }) {
         out.skipped += 1;
         continue;
       }
-      // The reason may join words of both, one line or " / " apart: each piece must be in one of them.
-      const pieces = (typeof link.because === 'string' ? link.because : '').split(/\n|\s+\/\s+/).filter((piece) => loosen(piece).loose.replace(END_MARKS, '').length >= 4);
-      const words = [...accounts, ...target.accounts].map((account) => ({ id: account.id, notes: loosen(account.text) }));
-      const homes = pieces.map((piece) => words.filter((candidate) => inNotes(candidate.notes, piece)).map((candidate) => candidate.id));
+      // The reason may join words of both, one line or " / " apart, and may leave words out after a
+      // colon or at an ellipsis: each piece of four characters or more must be in the notes.
+      const pieces = (typeof link.because === 'string' ? link.because : '').split(/\n|\s+\/\s+|[：:…]|\.{3}/).filter((piece) => loosen(piece).loose.replace(END_MARKS, '').length >= 4);
+      const both = [...accounts, ...target.accounts];
+      const words = both.map((account) => ({ id: account.id, notes: loosen(account.text) }));
+      const theirFiles = [...new Set(both.map((account) => account.via))].map((via) => notesOf.get(via)).filter(Boolean);
+      const own = accounts.filter((account) => account.actor?.id === IMPORT_ACTOR).map((account) => account.id).slice(0, 1);
+      // Naming the two matters is not a reason, nor a fault: their titles are left out of the check.
+      const titles = new Set([event.title, target.event.title].filter(Boolean).map((title) => loosen(title).loose.replace(END_MARKS, '')));
+      const reasons = pieces.filter((piece) => !titles.has(loosen(piece).loose.replace(END_MARKS, '')));
+      const homes = reasons.map((piece) => {
+        const found = words.filter((candidate) => inNotes(candidate.notes, piece)).map((candidate) => candidate.id);
+        return found.length || !theirFiles.some((notes) => inNotes(notes, piece)) ? found : own;
+      });
       const sources = [...new Set(homes.flat())].slice(0, 3);
-      if (!pieces.length || homes.some((found) => !found.length)) {
+      if (!reasons.length || homes.some((found) => !found.length)) {
         out.skipped += 1;
         out.unsaid += 1;
         continue;
@@ -1094,7 +1122,7 @@ export async function runImport(directory, { env = process.env, ask = askModel, 
       writeImport(directory, state);
     }
     if (!state.run.placed) {
-      await placeStarted(directory, state, config, store, ask, now);
+      await placeStarted(directory, state, config, store, ask, now, plan.files);
       state.run.placed = true;
       writeImport(directory, state);
     }
@@ -1116,11 +1144,14 @@ export async function runImport(directory, { env = process.env, ask = askModel, 
  * One more call after the parts: puts the matters this import started under the larger ones
  * other parts wrote. It only adds links; when it fails, the import is done all the same.
  */
-async function placeStarted(directory, state, config, store, ask, now) {
-  const input = linkInput(store, state.run.created, now());
+async function placeStarted(directory, state, config, store, ask, now, files) {
+  const input = linkInput(store, state.run.created, now(), files);
   if (!input) return;
+  // The call decides the shape of the tree, so DeepSeek Harness thinks on it; thinking takes a
+  // minute or more, so it is given longer than an organizer's call.
+  const linking = config.agent === 'dsh' ? { ...config, effort: LINK_EFFORT, timeoutMs: LINK_TIMEOUT_MS } : config;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const reply = await ask(directory, config, LINK_INSTRUCTIONS, input);
+    const reply = await ask(directory, linking, LINK_INSTRUCTIONS, input);
     for (const key of ['input', 'output', 'cached']) state.run.usage[key] += reply.usage?.[key] ?? 0;
     const parse = {};
     const answer = reply.error ? undefined : jsonObject(reply.text, parse);
@@ -1128,7 +1159,7 @@ async function placeStarted(directory, state, config, store, ask, now) {
       log(directory, { run: state.run.id, part: 'links', attempt, outcome: 'failed', ms: reply.ms, usage: reply.usage, error: reply.error ?? 'the answer held no JSON object' });
       continue;
     }
-    const result = await applyLinks(store, answer, { runId: state.run.id, created: state.run.created });
+    const result = await applyLinks(store, answer, { runId: state.run.id, created: state.run.created, files });
     state.run.linked = (state.run.linked ?? 0) + result.linked.length;
     log(directory, { run: state.run.id, part: 'links', attempt, outcome: 'written', ms: reply.ms, usage: reply.usage, ...(parse.repaired ? { repaired: true } : {}), linked: result.linked.length, skipped: result.skipped, unsaid: result.unsaid });
     return;
