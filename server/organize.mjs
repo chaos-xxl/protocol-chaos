@@ -263,16 +263,64 @@ function unchangedSince(patch, base, current) {
   return out;
 }
 
-/** The first JSON object in a model's answer, or undefined. */
-export function jsonObject(text) {
+/**
+ * Mends the usual faults of JSON a model writes by hand: a quote mark inside a string left
+ * unescaped (it is followed by more text, not by , } ] or :), a line break or tab inside a string,
+ * and a comma before a closing bracket.
+ */
+export function repairJson(text) {
+  const nextMark = (from) => {
+    let at = from;
+    while (at < text.length && /\s/.test(text[at])) at += 1;
+    return text[at];
+  };
+  let out = '';
+  let inString = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (char === '\\') {
+        out += char + (text[index + 1] ?? '');
+        index += 1;
+      } else if (char === '"') {
+        const next = nextMark(index + 1);
+        if (next === undefined || /[,}\]:]/.test(next)) {
+          inString = false;
+          out += char;
+        } else {
+          out += '\\"';
+        }
+      } else if (char === '\n') out += '\\n';
+      else if (char === '\r') out += '\\r';
+      else if (char === '\t') out += '\\t';
+      else out += char;
+    } else if (char === '"') {
+      inString = true;
+      out += char;
+    } else if (char !== ',' || !/[}\]]/.test(nextMark(index + 1) ?? '')) {
+      out += char;
+    }
+  }
+  return out;
+}
+
+/** The first JSON object in a model's answer, mended when it has to be (info.repaired says so), or undefined. */
+export function jsonObject(text, info = {}) {
   const raw = String(text ?? '');
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
   if (start < 0 || end <= start) return undefined;
+  const body = raw.slice(start, end + 1);
   try {
-    return JSON.parse(raw.slice(start, end + 1));
+    return JSON.parse(body);
   } catch {
-    return undefined;
+    try {
+      const value = JSON.parse(repairJson(body));
+      info.repaired = true;
+      return value;
+    } catch {
+      return undefined;
+    }
   }
 }
 

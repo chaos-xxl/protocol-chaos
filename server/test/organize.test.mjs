@@ -86,6 +86,20 @@ process.stdin.on('end', () => {
 });
 `;
 
+test('an answer with the usual faults of hand-written JSON is mended, and says so', () => {
+  const info = {};
+  const text = 'Here it is:\n{"matters": [{"title": "读完"三体"，再看电视剧", "quotes": ["第一行\n第二行",],},]}';
+  const value = jsonObject(text, info);
+  assert.equal(value.matters[0].title, '读完"三体"，再看电视剧', 'quote marks inside a string');
+  assert.deepEqual(value.matters[0].quotes, ['第一行\n第二行'], 'a line break inside a string, and commas before closing brackets');
+  assert.equal(info.repaired, true);
+  const clean = {};
+  assert.equal(jsonObject('{"change": false}', clean).change, false);
+  assert.equal(clean.repaired, undefined, 'JSON that parses is not touched');
+  assert.equal(jsonObject('no JSON here'), undefined);
+  assert.equal(jsonObject('{"a": [1, 2}'), undefined, 'what cannot be mended is still refused');
+});
+
 test('an answer whose characters arrive split across two chunks is read whole', async () => {
   const world = setup({});
   writeFileSync(join(world.bin, 'dsh'), SPLIT_AGENT);
