@@ -692,6 +692,12 @@ function took(from, to) {
   return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
 
+/** The matters the repository held before the import that it added words to: not those it started itself. */
+function notedBefore(run) {
+  const created = new Set(run?.created ?? []);
+  return [...new Set(run?.noted ?? [])].filter((id) => !created.has(id));
+}
+
 /** The report of a finished import, with the tree of open matters. */
 export function importReport(directory, state) {
   const run = state.run ?? {};
@@ -703,7 +709,7 @@ export function importReport(directory, state) {
     took: run.startedAt && run.finishedAt ? took(run.startedAt, run.finishedAt) : undefined,
     read: run.read,
     newMatters: created.length,
-    wordsAddedToExisting: new Set(run.noted ?? []).size,
+    wordsAddedToExisting: notedBefore(run).length,
     leftOut: run.dropped ? `${run.dropped} matter${run.dropped === 1 ? '' : 's'} the model named without a sentence of the notes to rest on, or without a title` : undefined,
     tokens: run.usage && (run.usage.input || run.usage.output) ? run.usage : undefined,
     problems: run.errors?.length ? run.errors : undefined,
@@ -1038,7 +1044,7 @@ export async function undoImport(directory, now = new Date()) {
   const state = readImport(directory);
   const created = state?.run?.created ?? [];
   const store = new Store(directory);
-  const result = { cancelled: 0, kept: 0, noted: new Set(state?.run?.noted ?? []).size, backup: state?.run?.backup };
+  const result = { cancelled: 0, kept: 0, noted: notedBefore(state?.run).length, backup: state?.run?.backup };
   for (const eventId of created) {
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       let current;

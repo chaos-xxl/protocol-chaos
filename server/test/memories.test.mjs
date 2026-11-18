@@ -190,6 +190,32 @@ test('without an organizer the import runs in the conversation, part by part, an
   assert.equal(importOffer(other.data), undefined);
 });
 
+test('words a later part adds to a matter the import started are not counted as words on matters the repository held', async () => {
+  const { home, data, env } = freshHome();
+  writeFileSync(join(data, 'organizer.json'), JSON.stringify({ agent: 'dsh', command: '/bin/true', actor: 'organizer', enabled: true }));
+  rmSync(join(home, '.hermes'), { recursive: true, force: true });
+  const filler = Array.from({ length: 40 }, (_, i) => `Paragraph ${i} ${'x'.repeat(200)}`).join('\n\n');
+  put(join(home, '.claude', 'projects', '-tmp-trip', 'memory', 'project-trip.md'), `${TRIP}\n\n${filler}\n\n${LISBON}\n`);
+  const store = new Store(data);
+  pendImport(data);
+  await memoriesTool(data, { action: 'start' }, { env, store, spawnWorker: false });
+  const calls = [];
+  const ask = async (directory, config, rules, input) => {
+    calls.push(input);
+    const matters = [TRIP, LISBON].filter((quote) => input.includes(quote)).map((quote) => ({ ref: 'm1', existing: null, title: '2027 年春天葡萄牙行（和朋友）', quotes: [quote] }));
+    return { text: JSON.stringify({ matters }), usage: { input: 10, output: 10, cached: 0 } };
+  };
+  assert.equal(await runImport(data, { env, ask }), 0);
+  assert.notEqual(calls.findIndex((input) => input.includes(TRIP)), calls.findIndex((input) => input.includes(LISBON)), 'the two sentences are in two parts');
+  const state = readImport(data);
+  assert.equal(state.run.created.length, 1);
+  assert.equal(store.read((repo) => repo.getProtocol({ eventId: state.run.created[0], accounts: 'all' })).accounts.length, 2, 'the later part adds its sentence to the matter the earlier one started');
+  const report = await memoriesTool(data, { action: 'status' }, { env, store });
+  assert.equal(report.report.newMatters, 1);
+  assert.equal(report.report.wordsAddedToExisting, 0, 'the repository held no matter before the import');
+  assert.equal((await undoImport(data)).noted, 0);
+});
+
 test('an import nobody answers is offered on three days, then no more', async () => {
   const { data, env } = freshHome();
   pendImport(data);
