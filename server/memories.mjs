@@ -47,6 +47,9 @@ const MAX_QUOTES = 6;
 const MAX_OFFER_DAYS = 3;
 const DIRECTORY_SHOWN = 150;
 const STARTING_GRACE_MS = 60_000;
+const DAY_MS = 24 * 60 * 60_000;
+// A memory file not changed for this long: its projects are imported, not its to-dos.
+const STALE_MS = 90 * DAY_MS;
 const OPEN = ['emerging', 'active', 'waiting', 'dormant'];
 const SET_STATES = ['active', 'waiting', 'dormant', 'done', 'cancelled'];
 const FACT_KEYS = ['goal', 'constraint', 'plan'];
@@ -62,13 +65,23 @@ const PI_CONTEXT = ['AGENTS.override.md', 'AGENTS.md', 'AGENTS.MD', 'CLAUDE.md',
 
 /** What the model is asked to do with one part of the notes. */
 export const IMPORT_RULES = [
-  "You are importing the user's long-lived matters into their personal repository, from the notes other assistants keep about them (memory files and standing instructions). You are given the open matters the repository holds already, and one part of those notes. List the matters these notes show: what the user would still consider unfinished a month from now (a project, a plan, a commitment, a purchase, a trip, a target, an arrangement) and long-horizon aims, including ones set aside or finished when the notes say so. Not a matter: who the user is, their background, tastes and habits; rules for how an assistant should work, write or code; one-off facts; anything the notes only guess at. An aim, plan or target written among such facts (in a profile, under a heading such as background, career or finances) is a matter all the same. When the notes hold none, the list is empty.",
-  "For each matter, quotes: the sentences of the notes about it, copied character for character (they are kept as the record of where the matter came from: never reword, translate, shorten or join them), at most five, each a whole sentence or line. A sentence that only shares a word or a theme with a matter is not about it. existing: the id of the repository's matter it is, when it is one of them, else null. For a new one: title, what it is, and when or which where that tells it apart, in the language of the notes, at most 60 characters; ref, a short handle such as m1. parent: the existing id or the ref of the larger matter it is plainly part of or a step toward, else null; for an existing matter, give it only when the repository shows that matter under no larger one. Group them as the user would: a broad aim with its concrete parts under it, not one matter per sentence; a part that only repeats its parent is not a matter of its own.",
+  "You are importing the user's long-lived matters into their personal repository, from the notes other assistants keep about them (memory files and standing instructions). You are given the open matters the repository holds already, and one part of those notes. List the matters these notes show: what the user would still consider unfinished a month from now (a project, a plan, a commitment, a purchase, a trip, a target, an arrangement) and long-horizon aims, including ones set aside or finished when the notes say so (a review passed, a renovation done). Not a matter: who the user is, their background, tastes and habits; a style or a direction they keep to; what they believe or have thought through (a judgment, a concept, a method); rules for how an assistant should work, write or code; one-off facts; anything the notes only guess at. An aim, plan or target written among such facts (in a profile, under a heading such as background, career or finances) is a matter all the same. When the notes hold none, the list is empty.",
+  "For each matter, quotes: the sentences of the notes about it, copied character for character (they are kept as the record of where the matter came from: never reword, translate, shorten or join them), at most five, each a whole sentence or line. A sentence that only shares a word or a theme with a matter is not about it. existing: the id of the repository's matter it is, when it is one of them, else null. For a new one: title, what it is, and when or which where that tells it apart, in the language of the notes, at most 60 characters; ref, a short handle such as m1. parent: the existing id or the ref of the larger matter it is plainly part of or a step toward, else null; for an existing matter, give it only when the repository shows that matter under no larger one. Group them as the user would: a broad aim with its concrete parts under it, not one matter per sentence; a part that only repeats its parent is not a matter of its own. When the notes state an aim and name matters of the repository as its parts or steps, the aim is a matter of its own and those matters go under it. A project's list of next steps or to-dos is its plan, not a matter each: a step is a matter of its own only when the notes give it something of its own (a date, a budget, people, how far it got). From a file not changed for 90 days or more (the part names them), write its projects and aims as matters and keep their steps and to-dos in the project's plan, never as matters of their own: they may be done or dropped since.",
   'Fields of a new matter, only what the notes say, in the language of the notes, each clear on its own, or null: goal (what it is meant to achieve, including what would count as done), constraint (limits, deadlines, budgets, wishes and preferences), plan (the arrangement as decided: when, where, how, which option), progress (where it stands, in one short sentence), state (active, waiting, dormant, done or cancelled; null when unclear). Write relative times as concrete dates when the notes date them; otherwise keep them as written. Never write "the user"; write the facts themselves. For an existing matter, give its quotes, and only the fields the notes add.',
 ].join('\n\n');
 
 /** For a run in the background: the rules, and the answer as one JSON object. */
 export const IMPORT_INSTRUCTIONS = `${IMPORT_RULES}\n\nAnswer with one JSON object and nothing else: {"matters": [{"ref": string, "existing": string or null, "title": string or null, "parent": string or null, "state": string or null, "progress": string or null, "goal": string or null, "constraint": string or null, "plan": string or null, "quotes": [string]}]}. Do not use any tool.`;
+
+/**
+ * For one more call after the parts, in the background: the matters were written part by part,
+ * so a larger aim and its parts may have been written apart; this puts them together.
+ */
+export const LINK_INSTRUCTIONS = [
+  "You are putting matters just imported into the user's personal repository in their places. Each was written from one part of the notes the user's assistants keep, so a larger aim and its parts may have been written apart. You are given the matters this import started that sit under no larger matter, each with the words of the notes it rests on, and the repository's other open matters.",
+  "For each matter of the first list, name the larger matter it is part of or a step toward, from either list, only when the words say so: the child's words say it belongs to the parent or serves it (a second income for financial independence, say), or the parent's words name the child among its parts or steps. Give those words as because, copied from the words shown. Two separate things are siblings, not parent and child; matters whose words only share a word, a theme or a section of the notes are not linked; a matter the parent's words only mention, as a circumstance or an example, is not its part. When the words do not say so, leave it out.",
+  'Answer with one JSON object and nothing else: {"links": [{"child": id, "parent": id, "because": string}]}, an empty list when there is none. Do not use any tool.',
+].join('\n\n');
 
 /** For a run in a conversation: the same rules, and the answer as the next call of the tool. */
 const CONVERSATION_INSTRUCTIONS = `${IMPORT_RULES}\n\nThen call memories_import with action "record", this part's number as part, and matters: that list, as objects with the fields ref, existing, title, parent, state, progress, goal, constraint, plan and quotes (null where there is nothing). Do it for each part as it comes, without asking the user: they agreed to the import. After the last part the tool answers with the report.`;
@@ -173,7 +186,7 @@ function candidates(env) {
     const folder = join(claude, 'projects', project, 'memory');
     const files = list(folder, (name) => name.endsWith('.md'));
     // MEMORY.md is the index of the other files there: their names and one line each.
-    for (const name of files.length > 1 ? files.filter((file) => file !== 'MEMORY.md') : files) add('claude-code', join(folder, name), `Claude Code memory: ${name}`);
+    for (const name of files.length > 1 ? files.filter((file) => file !== 'MEMORY.md') : files) add('claude-code', join(folder, name), `Claude Code memory: ${name}`, 'claude-memory');
   }
   add('codex', join(homes.codex, 'AGENTS.md'), 'Codex: AGENTS.md');
   for (const name of list(join(homes.codex, 'memories'), (file) => file.endsWith('.md'))) add('codex', join(homes.codex, 'memories', name), `Codex memory: ${name}`);
@@ -278,6 +291,15 @@ export function findSources(env = process.env) {
         continue;
       }
       text = body;
+    }
+    // Claude Code types its memories: feedback (how to work) and reference (where things are)
+    // are never matters; user and project ones may hold some.
+    if (candidate.kind === 'claude-memory') {
+      const type = /^\s*type\s*:\s*['"]?([A-Za-z]+)/m.exec(frontMatter(text).front ?? '')?.[1]?.toLowerCase();
+      if (type === 'feedback' || type === 'reference') {
+        skipped.push({ ...candidate, why: `a Claude Code memory of type ${type}: how to work or where things are, not a matter` });
+        continue;
+      }
     }
     text = text.trim();
     if (!text) continue;
@@ -391,6 +413,13 @@ function estimate(chunks, openCount, mode, agent) {
     output += answer;
     seconds += 8 + answer / 50 + (rules + directory + notes) / 3000;
     matters += 4;
+  }
+  // In the background, one more call puts together what the parts wrote apart (LINK_INSTRUCTIONS).
+  if (mode === 'background' && chunks.length) {
+    const started = 4 * chunks.length;
+    input += tokensOf(LINK_INSTRUCTIONS) + CALL_OVERHEAD + 90 * started + 25 * Math.min(DIRECTORY_SHOWN, openCount);
+    output += 60 + 15 * started;
+    seconds += 6;
   }
   if (mode === 'conversation') seconds *= 1.5;
   if (agent === 'codex') seconds *= 2;
@@ -521,6 +550,8 @@ export function partInput(chunk, index, of, entries, now = new Date()) {
   const lines = [`Today is ${today(now)}.`, '', "The repository's open matters (id: title, state; the larger matter it is part of):"];
   if (!open.length) lines.push('(none yet)');
   for (const entry of open) lines.push(`- ${entry.id}: ${clip(entry.title ?? '(untitled)', 70)} (${entry.state}${entry.parents?.length ? `; part of ${entry.parents.join(', ')}` : ''})`);
+  const old = [...new Set(chunk.parts.filter((part) => now - Date.parse(part.mtime) >= STALE_MS).map((part) => `${part.via} (last changed ${part.mtime.slice(0, 10)}, ${Math.floor((now - Date.parse(part.mtime)) / DAY_MS)} days ago)`))];
+  if (old.length) lines.push('', `Not changed for 90 days or more, so the steps and to-dos in them may be done or dropped since: ${old.join('; ')}.`);
   lines.push('', `The notes, part ${index + 1} of ${of}:`, '', chunk.text);
   return lines.join('\n');
 }
@@ -717,6 +748,85 @@ async function linkStarted(store, eventId, parentId, item, runId) {
     if (!(error instanceof ProtocolError)) throw error; // a cycle, say: it stays where it is
     return false;
   }
+}
+
+/**
+ * What the model is shown after the parts: the matters this import started under no larger
+ * matter, with the words each rests on, and the other open matters. Undefined when there is
+ * nothing to put together.
+ */
+export function linkInput(store, created, now = new Date()) {
+  const loose = [];
+  const looseIds = new Set();
+  for (const eventId of created) {
+    let found;
+    try {
+      found = store.read((repo) => repo.getProtocol({ eventId, accounts: 'all' }));
+    } catch {
+      continue;
+    }
+    const { event, accounts } = found;
+    if (event.state === 'cancelled' || event.parents?.length) continue;
+    const words = accounts.find((account) => account.actor?.id === IMPORT_ACTOR) ?? accounts[0];
+    looseIds.add(eventId);
+    loose.push(`- ${eventId}: ${clip(event.title ?? '(untitled)', 70)} (${event.state}); ${words?.via ?? 'the notes'}: "${clip(words?.text ?? '', 220)}"`);
+  }
+  const others = store.read((repo) => repo.contextPack({}).events)
+    .filter((entry) => OPEN.includes(entry.state) && !looseIds.has(entry.id))
+    .slice(0, DIRECTORY_SHOWN)
+    .map((entry) => `- ${entry.id}: ${clip(entry.title ?? '(untitled)', 70)} (${entry.state}${entry.parents?.length ? `; part of ${entry.parents.join(', ')}` : ''})`);
+  if (!loose.length || loose.length + others.length < 2) return undefined;
+  return [
+    `Today is ${today(now)}.`, '',
+    'The matters this import started that sit under no larger matter (id: title, state; the file and words of the notes it rests on):',
+    ...loose.slice(0, 120), '',
+    "The repository's other open matters (id: title, state; the larger matter it is part of):",
+    ...(others.length ? others : ['(none)']),
+  ].join('\n');
+}
+
+/**
+ * Writes the links the model named after the parts. Only a matter this import started, under no
+ * larger matter yet, is put under another, and only when the words the model gives as the reason
+ * are in the words of the child or of the parent; the link rests on those words. Returns
+ * { linked, skipped, unsaid }: unsaid counts the links whose reason is in neither.
+ */
+export async function applyLinks(store, answer, { runId, created }) {
+  const out = { linked: [], skipped: 0, unsaid: 0 };
+  const mine = new Set(created);
+  const links = Array.isArray(answer?.links) ? answer.links.slice(0, 200) : [];
+  for (const link of links) {
+    const child = typeof link?.child === 'string' ? link.child : undefined;
+    const parent = typeof link?.parent === 'string' ? link.parent : undefined;
+    if (!child || !parent || child === parent || !mine.has(child)) {
+      out.skipped += 1;
+      continue;
+    }
+    try {
+      const { event, accounts } = store.read((repo) => repo.getProtocol({ eventId: child, accounts: 'all' }));
+      const target = store.read((repo) => repo.getProtocol({ eventId: parent, accounts: 'all' }));
+      if (event.parents?.length || event.state === 'cancelled' || target.event.state === 'cancelled' || event.metadata?.[IMPORT_KEY]?.run !== runId) {
+        out.skipped += 1;
+        continue;
+      }
+      // The reason may join words of both, one line or " / " apart: each piece must be in one of them.
+      const pieces = (typeof link.because === 'string' ? link.because : '').split(/\n|\s+\/\s+/).filter((piece) => loosen(piece).loose.replace(END_MARKS, '').length >= 4);
+      const words = [...accounts, ...target.accounts].map((account) => ({ id: account.id, notes: loosen(account.text) }));
+      const homes = pieces.map((piece) => words.filter((candidate) => inNotes(candidate.notes, piece)).map((candidate) => candidate.id));
+      const sources = [...new Set(homes.flat())].slice(0, 3);
+      if (!pieces.length || homes.some((found) => !found.length)) {
+        out.skipped += 1;
+        out.unsaid += 1;
+        continue;
+      }
+      await store.write((repo) => repo.addParent({ childEventId: child, parentEventId: parent, actor: ACTOR, sourceAccountIds: sources }));
+      out.linked.push(child);
+    } catch (error) {
+      if (!(error instanceof ProtocolError)) throw error; // no such matter, or a cycle: left as it is
+      out.skipped += 1;
+    }
+  }
+  return out;
 }
 
 /** Adds the words to a matter that has not got them yet, and fills in the facts it lacks. */
@@ -954,9 +1064,10 @@ export async function runImport(directory, { env = process.env, ask = askModel, 
       for (let attempt = 1; attempt <= 2 && !answer; attempt += 1) {
         const reply = await ask(directory, config, IMPORT_INSTRUCTIONS, input);
         for (const key of ['input', 'output', 'cached']) state.run.usage[key] += reply.usage?.[key] ?? 0;
-        answer = reply.error ? undefined : jsonObject(reply.text);
+        const parse = {};
+        answer = reply.error ? undefined : jsonObject(reply.text, parse);
         error = reply.error ?? (answer ? undefined : 'the answer held no JSON object');
-        log(directory, { run: state.run.id, part: index + 1, attempt, outcome: answer ? 'answered' : 'failed', ms: reply.ms, usage: reply.usage, error });
+        log(directory, { run: state.run.id, part: index + 1, attempt, outcome: answer ? 'answered' : 'failed', ms: reply.ms, usage: reply.usage, ...(parse.repaired ? { repaired: true } : {}), error });
       }
       if (!answer) {
         state.run.errors.push(`part ${index + 1}: ${error}`);
@@ -974,11 +1085,17 @@ export async function runImport(directory, { env = process.env, ask = askModel, 
         state.run.created.push(...result.created);
         state.run.noted.push(...result.noted);
         state.run.dropped += result.dropped;
+        state.run.linked = (state.run.linked ?? 0) + result.linked.length;
         // Counts only, as everywhere in this log: what was written and why any was left out.
         log(directory, { run: state.run.id, part: index + 1, outcome: 'written', created: result.created.length, noted: result.noted.length, linked: result.linked.length, dropped: result.dropped, why: result.why });
       }
       state.run.chunk = index + 1;
       state.run.updatedAt = now().toISOString();
+      writeImport(directory, state);
+    }
+    if (!state.run.placed) {
+      await placeStarted(directory, state, config, store, ask, now);
+      state.run.placed = true;
       writeImport(directory, state);
     }
     finishRun(directory, state, env, now());
@@ -992,6 +1109,29 @@ export async function runImport(directory, { env = process.env, ask = askModel, 
     return 1;
   } finally {
     releaseLock(lock);
+  }
+}
+
+/**
+ * One more call after the parts: puts the matters this import started under the larger ones
+ * other parts wrote. It only adds links; when it fails, the import is done all the same.
+ */
+async function placeStarted(directory, state, config, store, ask, now) {
+  const input = linkInput(store, state.run.created, now());
+  if (!input) return;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const reply = await ask(directory, config, LINK_INSTRUCTIONS, input);
+    for (const key of ['input', 'output', 'cached']) state.run.usage[key] += reply.usage?.[key] ?? 0;
+    const parse = {};
+    const answer = reply.error ? undefined : jsonObject(reply.text, parse);
+    if (!answer) {
+      log(directory, { run: state.run.id, part: 'links', attempt, outcome: 'failed', ms: reply.ms, usage: reply.usage, error: reply.error ?? 'the answer held no JSON object' });
+      continue;
+    }
+    const result = await applyLinks(store, answer, { runId: state.run.id, created: state.run.created });
+    state.run.linked = (state.run.linked ?? 0) + result.linked.length;
+    log(directory, { run: state.run.id, part: 'links', attempt, outcome: 'written', ms: reply.ms, usage: reply.usage, ...(parse.repaired ? { repaired: true } : {}), linked: result.linked.length, skipped: result.skipped, unsaid: result.unsaid });
+    return;
   }
 }
 

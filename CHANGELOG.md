@@ -2,6 +2,17 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
+## Unreleased
+
+From two more real imports of the same memory files, and a check of invented notes extended to ten checks:
+
+- **One more call after the parts puts together what they wrote apart.** Each part is read on its own, so a larger aim and its parts could be written apart. In the background, a last call is shown the matters the import started under no larger matter, with the words each rests on, and the other open matters, and names links. A link is written only for a matter the import started, and only when the reason the model gives is in the words of the child or of the parent; the link rests on those words. In the first real run without that condition, two of the four links it made rested on nothing the words said, only on a shared theme; with it, none did.
+- **The model's JSON is mended before it is asked again.** A quote mark left unescaped inside a string, a line break inside a string and a comma before a closing bracket are mended; the log says when. In one real import an answer that would not parse cost a second call.
+- **The rules say what else is not a matter, and what is a plan.** A style or a direction the user keeps to, and what they believe or have thought through (a judgment, a concept, a method), are not matters. A project's list of next steps is its plan, not a matter each. When the notes state an aim and name matters already written as its parts, the aim is a matter and those go under it. Finished matters include a review passed or a renovation done.
+- **Old memory files: their projects, not their to-dos.** A part names the files not changed for 90 days or more, whose steps may be done or dropped since; their projects and aims are written as matters and their steps kept in the plan.
+- **Claude Code memories of type `feedback` or `reference` are left out**: they say how to work or where things are, never what is to be done. In a real import, two of them became matters.
+- The plan's estimate includes the last call.
+
 ## protocol-chaos 0.2.7 (2026-11-18)
 
 From importing a real set of memory files (8 files, about 24,000 characters), whose largest aim was missing from the result:

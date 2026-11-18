@@ -11,7 +11,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { instructions } from '../instructions.mjs';
 import {
-  applyExtraction, findSources, importOffer, makeChunks, memoriesTool, pendImport, planImport, readImport, redact, renderTree, runImport, undoImport,
+  applyExtraction, findSources, importOffer, LINK_INSTRUCTIONS, makeChunks, memoriesTool, partInput, pendImport, planImport, readImport, redact, renderTree, runImport, undoImport,
 } from '../memories.mjs';
 import { runSweep } from '../organize.mjs';
 import { Store } from '../store.mjs';
@@ -64,6 +64,19 @@ test('the files read, the ones left out and why, and nothing secret in what is s
   assert.equal(redact('a project named sk-learn and 2026-11-17').count, 0, 'ordinary words and dates are kept');
 });
 
+test('Claude Code memories of type feedback or reference are left out: how to work, where things are', () => {
+  const { home, env } = freshHome();
+  const folder = join(home, '.claude', 'projects', '-tmp-photo', 'memory');
+  put(join(folder, 'style.md'), '---\nname: style\ndescription: how Sam wants reports\nmetadata:\n  node_type: memory\n  type: feedback\n---\n\nTurn research docs into reports with screenshots.\n');
+  put(join(folder, 'figma.md'), '---\nname: figma\ntype: reference\n---\n\nThe moodboard is in Figma, page Colours.\n');
+  const { files, skipped } = findSources(env);
+  assert.ok(!files.some((file) => /style\.md|figma\.md/.test(file.via)));
+  const why = Object.fromEntries(skipped.map((file) => [file.path.split('/').pop(), file.why]));
+  assert.match(why['style.md'], /type feedback/);
+  assert.match(why['figma.md'], /type reference/);
+  assert.ok(files.some((file) => file.via === 'Claude Code memory: project-studio.md'), 'a memory without those types is still read');
+});
+
 test('parts stay under the limit, keep whole files together where they fit, and name their files', () => {
   const files = [
     { path: '/a', via: 'A: a.md', mtime: '2026-11-01T00:00:00.000Z', text: 'one\n\ntwo', kind: 'markdown' },
@@ -80,6 +93,8 @@ test('parts stay under the limit, keep whole files together where they fit, and 
 function fakeModel(calls) {
   return async (directory, config, rules, input) => {
     calls.push(input);
+    // The call after the parts, which puts together what they wrote apart: nothing to put here.
+    if (rules === LINK_INSTRUCTIONS) return { text: '{"links": []}', usage: { input: 300, output: 20, cached: 0 }, ms: 5 };
     const matters = [];
     if (input.includes(TRIP)) {
       matters.push({ ref: 'm1', existing: null, title: '2027 年春天葡萄牙行（和朋友）', parent: null, state: 'active', progress: null, goal: '和朋友去葡萄牙玩一周', constraint: '预算一万五以内；想住在里斯本老城附近', plan: null, quotes: [TRIP, LISBON] });
@@ -146,8 +161,9 @@ test('a background import writes what rests on the notes, folds its own fields, 
   assert.equal(report.report.wordsAddedToExisting, 1);
   assert.match(report.report.tree, /^\+ 2027 年春天葡萄牙行（和朋友）$/m);
   assert.match(report.report.tree, /^- Home photo studio, 2027$/m);
-  assert.equal(calls.length, 1, 'notes this short are one part, one call');
-  assert.deepEqual(report.report.tokens, { input: 1000, output: 100, cached: 0 });
+  assert.equal(calls.filter((input) => input.includes('The notes, part')).length, 1, 'notes this short are one part, one call');
+  assert.equal(calls.length, 2, 'and one more after the parts, to put together what they wrote apart');
+  assert.deepEqual(report.report.tokens, { input: 1300, output: 120, cached: 0 });
   assert.match(report.tell, /show the tree exactly as given/);
   assert.equal((await memoriesTool(data, { action: 'finish' }, { env, store })).status, 'reported');
   assert.equal(importOffer(data), undefined, 'reported: the tool is not offered again');
@@ -219,6 +235,17 @@ test('words a later part adds to a matter the import started are not counted as 
   assert.equal((await undoImport(data)).noted, 0);
 });
 
+test('a part names the files not changed for 90 days or more, whose to-dos may be done or dropped', () => {
+  const chunk = { text: '(the notes)', parts: [
+    { via: 'Claude Code memory: project.md', mtime: '2026-06-29T00:00:00.000Z', text: 'Project: icons.' },
+    { via: 'Kiro steering: sam.md', mtime: '2026-11-01T00:00:00.000Z', text: 'Moving in winter.' },
+  ] };
+  const input = partInput(chunk, 0, 1, [], new Date('2026-11-18T09:00:00Z'));
+  assert.match(input, /Not changed for 90 days or more, so the steps and to-dos in them may be done or dropped since: Claude Code memory: project\.md \(last changed 2026-06-29, 142 days ago\)\./);
+  assert.doesNotMatch(input, /sam\.md \(last changed/, 'a file changed recently is not named');
+  assert.doesNotMatch(partInput({ text: '', parts: [chunk.parts[1]] }, 0, 1, [], new Date('2026-11-18T09:00:00Z')), /Not changed for 90 days/);
+});
+
 test('a quote the model retyped is found, and kept as the notes word it', async () => {
   const { data } = freshHome();
   const store = new Store(data);
@@ -266,6 +293,57 @@ test('a later part puts a matter the import started under a larger one; a matter
   assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: icons })).event.parents, [portfolio], 'the matter this import started earlier is put under the larger one');
   assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: old.eventId })).event.parents, [], 'one the repository held before is not moved');
   assert.deepEqual(two.noted.sort(), [old.eventId, icons].sort(), 'both get the words');
+});
+
+test('after the parts, one more call puts what they wrote apart under the larger matter; nothing the repository held is moved', async () => {
+  const { home, data, env } = freshHome();
+  writeFileSync(join(data, 'organizer.json'), JSON.stringify({ agent: 'dsh', command: '/bin/true', actor: 'organizer', enabled: true }));
+  rmSync(join(home, '.hermes'), { recursive: true, force: true });
+  const ICONS = 'Pixel icon set: 120 icons in a retro style, free to use.';
+  const GOAL = 'Long-term goal: side projects that pay for a year off by 2030, the pixel icon set first.';
+  const filler = Array.from({ length: 40 }, (_, i) => `Paragraph ${i} ${'x'.repeat(200)}`).join('\n\n');
+  put(join(home, '.claude', 'projects', '-tmp-side', 'memory', 'project-side.md'), `${ICONS}\n\n${filler}\n\n${GOAL}\n`);
+  const store = new Store(data);
+  const blog = await store.write((repo) => repo.eventNote({ actor: { kind: 'agent', id: 'kiro' }, text: 'I keep a photo blog.', title: 'Photo blog' }));
+  pendImport(data);
+  await memoriesTool(data, { action: 'start' }, { env, store, spawnWorker: false });
+  const calls = [];
+  const ask = async (directory, config, rules, input) => {
+    calls.push({ rules, input });
+    if (rules === LINK_INSTRUCTIONS) {
+      const id = (title) => new RegExp(`- (evt_[\\w-]+): ${title}`).exec(input)?.[1];
+      return { text: JSON.stringify({ links: [
+        { child: id('Pixel icon set'), parent: id('A year off by 2030'), because: 'side projects that pay for a year off by 2030, the pixel icon set first' },
+        { child: blog.eventId, parent: id('A year off by 2030'), because: 'I keep a photo blog.' },
+        { child: id('A year off by 2030'), parent: 'evt_nowhere', because: 'side projects' },
+        { child: id('A year off by 2030'), parent: blog.eventId, because: 'words nobody wrote down' },
+      ] }), usage: { input: 300, output: 20, cached: 0 } };
+    }
+    const matters = [];
+    if (input.includes(ICONS)) matters.push({ ref: 'm1', title: 'Pixel icon set', quotes: [ICONS] });
+    if (input.includes(GOAL)) matters.push({ ref: 'm1', title: 'A year off by 2030', quotes: [GOAL] });
+    return { text: JSON.stringify({ matters }), usage: { input: 10, output: 10, cached: 0 } };
+  };
+  assert.equal(await runImport(data, { env, ask }), 0);
+  const parts = calls.filter((call) => call.rules !== LINK_INSTRUCTIONS);
+  assert.notEqual(parts.findIndex((call) => call.input.includes(ICONS)), parts.findIndex((call) => call.input.includes(GOAL)), 'the two are in two parts');
+  const last = calls.at(-1);
+  assert.equal(last.rules, LINK_INSTRUCTIONS, 'the call that puts them together comes after the parts');
+  assert.match(last.input, /sit under no larger matter[\s\S]*Pixel icon set[\s\S]*A year off by 2030[\s\S]*other open matters[\s\S]*Photo blog/);
+  const state = readImport(data);
+  const [icons, goal] = state.run.created;
+  assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: icons })).event.parents, [goal]);
+  assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: goal })).event.parents, [], 'a link to a matter that is not there, or for a reason the words do not give, is left out');
+  assert.deepEqual(store.read((repo) => repo.getProtocol({ eventId: blog.eventId })).event.parents, [], 'a matter the repository held before is not moved');
+  assert.equal(state.run.linked, 1);
+  assert.match(readFileSync(join(data, 'import', 'log.jsonl'), 'utf8'), /"part":"links".*"outcome":"written".*"linked":1,"skipped":3,"unsaid":1/);
+  const { revisions } = store.read((repo) => repo.getRevisions({ eventId: icons }));
+  const link = revisions.find((revision) => revision.type === 'parent.added');
+  const goalWords = store.read((repo) => repo.getProtocol({ eventId: goal, accounts: 'all' })).accounts.map((account) => account.id);
+  assert.ok(link.sourceAccountIds.every((id) => goalWords.includes(id)), 'the link rests on the words that say so: here, the larger matter\'s');
+  const undone = await undoImport(data);
+  assert.equal(undone.cancelled, 2);
+  assert.equal(store.read((repo) => repo.getProtocol({ eventId: blog.eventId })).event.state, 'emerging');
 });
 
 test('an import nobody answers is offered on three days, then no more', async () => {
