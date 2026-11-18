@@ -2,7 +2,7 @@
 
 The specification and the `protocol-chaos` package, which holds the reference server and the conformance tests, are listed together. A package version follows the draft it implements: 0.2.x implements draft 0.2.
 
-## Unreleased
+## protocol-chaos 0.2.6 (2026-11-18)
 
 - **`init` connects OpenCode, OpenClaw, Claude Desktop, GitHub Copilot and Pi.**
   - OpenCode: an entry in its global settings (`opencode.jsonc` or `opencode.json`), in the shape OpenCode 1.x and 2.x both read; OpenCode shows the server's instructions itself.
@@ -13,6 +13,7 @@ The specification and the `protocol-chaos` package, which holds the reference se
 - **JSON settings files keep their comments.** `init` reads and edits them with `jsonc-parser`, so a file with comments or trailing commas (common in OpenCode and VS Code) is no longer refused; only a file that cannot be read as JSON is. This adds `jsonc-parser` as a dependency.
 - **One agent `init` cannot add to no longer stops the others**: it is left out, with the reason, and the rest are connected.
 - The import also reads OpenCode's global `AGENTS.md`, OpenClaw's `MEMORY.md`, `USER.md` and newest 30 daily notes, Copilot's `copilot-instructions.md` and the memories of VS Code's Copilot chat, and Pi's context file.
+- The import's report, and `import --undo`, no longer count a matter the import started among the matters the repository held already when a later part of the notes added words to it.
 
 ## protocol-chaos 0.2.5 (2026-11-18)
 
