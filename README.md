@@ -1,6 +1,8 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-dark.svg">
-  <img alt="Protocol Chaos. Tools change. Your matters stay. Things a person said to Claude, Codex, Cursor, Kiro and their own app are threaded into a tidy tree of the matters they keep. A passing question stays unthreaded, and one assistant's guess is marked as an inference." src="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-light.svg">
+  <source media="(max-width: 600px) and (prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-dark-compact.svg?v=2">
+  <source media="(max-width: 600px)" srcset="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-light-compact.svg?v=2">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-dark.svg?v=2">
+  <img alt="Protocol Chaos. Connected plans. Shared memory. Yours to keep. An open memory protocol and MCP server for personal AI assistants. Claude Code, Codex and Hermes share a user-owned memory repository. Inside it, a photography goal connects weekend photo walks and a first photo zine." src="https://raw.githubusercontent.com/chaos-xxl/protocol-chaos/main/docs/assets/hero-light.svg?v=2">
 </picture>
 
 [![npm](https://img.shields.io/npm/v/protocol-chaos?label=npm)](https://www.npmjs.com/package/protocol-chaos)
@@ -10,9 +12,11 @@
 
 English · [简体中文](docs/README.zh-CN.md)
 
-**AI memory organized around your plans. Shared across assistants. Owned by you.**
+**Connected plans. Shared memory. Yours to keep.**
 
-Protocol Chaos is an open memory protocol with a ready-to-run MCP server. It keeps the things you are working toward—projects, trips, learning goals—as connected records: what each is for, where it stands, and how it fits into the bigger picture.
+An open memory protocol and MCP server for personal AI assistants.
+
+Protocol Chaos keeps the things you are working toward—projects, trips, learning goals—as connected records: what each is for, where it stands, and how it fits into the bigger picture.
 
 - **See how your plans fit together.** Keep a goal, its parts and their progress connected. Your assistant can follow an ongoing matter across conversations, and your app can use the same structure to build a coherent view of it.
 - **Pick up with another assistant.** Compatible assistants read and update the same matters, including the latest constraints and plans. Changes keep their author and source words.

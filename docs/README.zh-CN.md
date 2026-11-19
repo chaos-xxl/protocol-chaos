@@ -7,7 +7,9 @@
 
 [English](../README.md) · 简体中文
 
-**让事情有脉络，让不同助手接着做，让记忆归自己。**
+**Connected plans. Shared memory. Yours to keep.**
+
+An open memory protocol and MCP server for personal AI assistants.
 
 Protocol Chaos 是一份开放的记忆协议，也提供可以直接运行的 MCP 服务端。它把你正在推进的项目、旅行、学习目标等，保存成彼此关联的事情：为了什么、进展如何、属于哪件更大的事。
 
