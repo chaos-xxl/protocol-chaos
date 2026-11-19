@@ -49,7 +49,7 @@ const DIRECTORY_SHOWN = 150;
 const STARTING_GRACE_MS = 60_000;
 const DAY_MS = 24 * 60 * 60_000;
 // How hard DeepSeek Harness thinks on the call after the parts (off, low, high or max), and how
-// long that call may take. In real imports it thought for 11,000 to 14,000 tokens, in 60 to 80 s.
+// long that call may take. On the input of a real import it thought for about 11,000 tokens, in about a minute.
 const LINK_EFFORT = 'high';
 const LINK_TIMEOUT_MS = 10 * 60_000;
 // A memory file not changed for this long: its projects are imported, not its to-dos.
