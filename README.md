@@ -10,37 +10,40 @@
 
 English · [简体中文](docs/README.zh-CN.md)
 
-**An open protocol for the matters in a person's life, held by the person and shared by every AI assistant they use.**
+**AI memory organized around your plans. Shared across assistants. Owned by you.**
 
-People tell their AI assistants about trips, renovations, job searches, purchases and ambitions. Each assistant keeps what it hears to itself, so the same plan is explained again to every new assistant and is lost when the tool changes. Protocol Chaos keeps these matters in one repository that belongs to the user. Any compatible assistant can read it, add to it and connect what it holds, and the matters outlast any one assistant.
+Protocol Chaos is an open memory protocol with a ready-to-run MCP server. It keeps the things you are working toward—projects, trips, learning goals—as connected records: what each is for, where it stands, and how it fits into the bigger picture.
 
-With Protocol Chaos, an assistant can:
+- **See how your plans fit together.** Keep a goal, its parts and their progress connected. Your assistant can follow an ongoing matter across conversations, and your app can use the same structure to build a coherent view of it.
+- **Pick up with another assistant.** Compatible assistants read and update the same matters, including the latest constraints and plans. Changes keep their author and source words.
+- **Keep your memory when tools change.** The repository is on your own computer or server. What you have saved there stays under your control if an assistant account becomes unavailable, and can move to another conforming implementation.
 
-- **Pick up where another left off**: read what the user told a different assistant, on a different computer, weeks ago.
-- **Keep the user's words**: record them verbatim, and mark its own inferences as inferences.
-- **Connect matters**: place a trip under the wish it serves, and point it at the people it involves.
-- **Write alongside other assistants**: without overwriting what another has committed, with every change recorded.
+Useful with one assistant across new conversations, several assistants sharing context, or a personal agent you are building.
 
-```mermaid
-flowchart LR
-  claude[Claude] <--> server
-  codex[Codex] <--> server
-  cursor[Cursor] <--> server
-  app[Your own app] <--> server
-  server["A Protocol Chaos server<br/>any conforming implementation"] --- repo[("The user's repository<br/>Events · words · Entities · history")]
-```
+[Try it](#quick-start) · [Build a personal agent](#for-personal-agent-builders) · [Read the protocol](PROTOCOL.md)
 
 ## Quick start
 
-You need Node.js 20 or later, on macOS or Linux. One command finds Claude Code, Codex, DeepSeek Harness, Hermes, Kiro, Cursor, OpenCode, OpenClaw, Claude Desktop, GitHub Copilot (VS Code and Copilot CLI) and Pi on this computer and connects the ones you pick to one repository:
+Requires **Node.js 20+** on **macOS or Linux**.
 
-```sh
+~~~sh
 npx protocol-chaos init
-```
+~~~
 
-Each agent gets an MCP server named `protocol_chaos` that writes under the agent's own name. The agents read the directory of your matters themselves and open the ones a message is about; nothing is added to a turn before the model answers. Every change is recorded, and every file edited is backed up first: `npx protocol-chaos uninstall` puts each file back as it was, and `npx protocol-chaos doctor` checks the connections. An agent that already has a `protocol_chaos` server is left as it is. One of them organizes in the background (DeepSeek Harness, then Claude Code, then Codex): after an assistant records your words, one call to that agent's model folds them into their matter, so every agent reads where it stands. What `init` writes for each agent is in [server/README.md](server/README.md#installer), and how organizing works in [Organizing in the background](server/README.md#organizing-in-the-background). For Hermes it also installs [its plugin](integrations/hermes/protocol-chaos/README.md).
+1. **Choose your assistants.** The installer finds the ones on your computer and connects those you select to one repository.
+2. **Tell one about an ongoing plan.** For example: “I'd like to get into street photography, but only at weekends.”
+3. **Continue in a new conversation.** Ask what you said about photography, in the same assistant or another connected one. Later, change a constraint and check that the next conversation reads the new plan.
 
-So that a new repository does not start empty, `init` also offers to import the memories your assistants keep on this computer (Claude Code's `CLAUDE.md` and memory folders, Codex's `AGENTS.md`, Hermes's `MEMORY.md`, Kiro's steering files and others). It shows first which files it would read and leave out, what it would cost in tokens and time, and where the text goes, and imports only when you say yes; without a terminal to ask in, the next assistant you talk to asks instead. The files are only read. The import runs in the background with the organizer's model (where no agent can run in the background, in a conversation with your assistant), and then any assistant shows you the matters it found, as a tree. See [Importing other assistants' memories](server/README.md#importing-other-assistants-memories).
+The installer can also import your assistants' existing memory files. It shows what it would read, where the text goes, and the estimated model usage before asking. The original files are only read. [How importing works](server/README.md#importing-other-assistants-memories).
+
+Setup adapters cover **Claude Code, Codex, DeepSeek Harness, Hermes, Kiro, Cursor, OpenCode, OpenClaw, Claude Desktop, GitHub Copilot and Pi**. Real-session validation across these adapters is still in progress; see [setup details](server/README.md#installer).
+
+The installer can select a connected assistant to organize newly recorded words in the background. If none is available, your assistant is prompted to update the matter in the conversation. Hermes uses its own plugin. [How organizing works](server/README.md#organizing-in-the-background).
+
+Use <code>npx protocol-chaos doctor</code> to check connections and <code>npx protocol-chaos uninstall</code> to undo setup. The repository is kept. [Your data](#your-data).
+
+<details>
+<summary>Manual MCP setup and multiple computers</summary>
 
 To connect an assistant by hand instead, add the reference server under the name `protocol_chaos`:
 
@@ -64,20 +67,38 @@ To connect an assistant by hand instead, add the reference server under the name
   { "mcpServers": { "protocol_chaos": { "command": "npx", "args": ["-y", "protocol-chaos@0.2"] } } }
   ```
 
-Then tell one assistant about something you are planning, for example "I'd like to get into street photography, but only at weekends". Ask another assistant, or a new conversation, what you said about photography. The matter is stored in `~/.protocol-chaos/repository.json`, a plain file that belongs to you.
 
-For assistants on several computers, or a cloud assistant, run the same server over HTTP and give each assistant its own token: see [Remote](server/README.md#remote).
+For assistants on several computers, run the server over HTTP and issue each assistant its own token: [remote setup](server/README.md#remote).
 
-For the best results, give each assistant the [standing instructions](docs/agent-guide.md#server-instructions): MCP tells an assistant which tools exist, not when to use them. `protocol-chaos@0.2` follows this draft and its fixes; a later draft will be `0.3`.
+Manual setups should include the [standing instructions](docs/agent-guide.md#server-instructions), so assistants know when to read and record. The <code>init</code> command sets these up for supported clients.
 
-## Why Protocol Chaos?
+</details>
 
-- **The user holds the matters.** The repository belongs to the user, not to an assistant or a vendor, and every conforming server can export it whole and import it elsewhere.
-- **Matters are connected.** What looks like a one-off rarely is: a trip belongs to a wish to see more of the world, a camera serves a hobby. Parents, and the people and places Events share, make those connections explicit.
-- **Words are evidence.** The user's words are kept verbatim and never edited. Everything an assistant concludes rests on them, and the user's words win.
-- **Sparse is normal.** A matter can be one sentence. Assistants record what was said instead of questioning the user to complete it.
-- **Small and testable.** The specification defines only what implementations must agree on, and every requirement on servers has a conformance test.
-- **Built on MCP.** Every operation is an MCP tool, so any MCP client can use a conforming server, written in any language.
+## For personal-agent builders
+
+A personal agent needs to keep track of the user's ongoing plans before it can decide what belongs on a home screen or in an answer. A broad goal, a plan within it, and a recent change carry different meaning even when all three could become cards.
+
+Protocol Chaos gives them a structure you can maintain over time. Each matter has an identity, a current state, goals and constraints, links to larger matters, and the words and revisions behind it.
+
+For example, a user's photography goal might grow into:
+
+~~~text
+Get into street photography
+├── Weekend photo walks — active
+└── Make a first photo zine — emerging
+~~~
+
+From these same records, your app could show the goal and its parts in a planning view, surface a relevant change in a daily view, or answer a question about the zine with the user's current constraints. The example illustrates an application you can build; the reference server supplies the records and update operations. **Your app decides what to show, how to rank it and how to explain the choice.**
+
+Start with the directory returned by <code>context_pack</code>, read selected matters with <code>event_get_protocol</code>, and record new words with <code>event_note</code>. The [agent guide](docs/agent-guide.md) explains how to maintain them; the [specification](PROTOCOL.md) defines the shared contract.
+
+## How the memory is kept
+
+- **Current state and history stay distinct.** Read where a matter stands now, or inspect who changed it and the words behind the change.
+- **Words are evidence.** The user's words are kept verbatim. Inferences are marked with their basis, and the user's corrections take precedence.
+- **Sparse is normal.** A matter can begin with one sentence; the user is not asked to fill out a form.
+- **Connections are explicit.** A matter can have several parents and refer to the same people, places and things as other matters.
+- **The contract is portable.** The specification and conformance tests let other implementations support the same records and operations over MCP.
 
 ## What the protocol defines
 
@@ -92,6 +113,15 @@ For the best results, give each assistant the [standing instructions](docs/agent
 
 How a client finds the Events a conversation is about, how it ranks them and when it tidies up are left to the client. The full rules are in **[PROTOCOL.md](PROTOCOL.md)**.
 
+~~~mermaid
+flowchart LR
+  claude[Claude] <--> server
+  codex[Codex] <--> server
+  cursor[Cursor] <--> server
+  app[Your own app] <--> server
+  server["A Protocol Chaos server<br/>any conforming implementation"] --- repo[("The user's repository<br/>Events · words · Entities · history")]
+~~~
+
 ## Repository contents
 
 | Path | |
@@ -100,7 +130,7 @@ How a client finds the Events a conversation is about, how it ranks them and whe
 | [conformance/](conformance/README.md) | Conformance tests that check any server over MCP. |
 | [server/](server/README.md) | The reference server, at every level from Core to Remote: over stdio on one computer, or over HTTP for several. |
 | [docs/agent-guide.md](docs/agent-guide.md) | How an assistant can use a repository well: answer first, record after, organise later. Not normative. |
-| [integrations/hermes/](integrations/hermes/protocol-chaos/README.md) | A plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent): the user's matters are in the conversation before the model answers, and their words are recorded after it. Hermes decides on its own side what to read. |
+| [integrations/hermes/](integrations/hermes/protocol-chaos/README.md) | A plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent): a session overview, background recording and organizing, and optional per-turn context selection. |
 
 ## Implementing the protocol
 
@@ -118,18 +148,18 @@ The specification is meant to be enough on its own. To check that, an agent that
 
 ## Your data
 
-- The repository belongs to its user, and can always be exported and moved to another server (§8.6).
+- By default, the reference server stores your repository at <code>~/.protocol-chaos/repository.json</code>. It belongs to you and can be exported and moved to another conforming server (§8.6).
 - The reference server keeps it in one file on the computer it runs on. Protocol Chaos has no server of its own, and the reference server sends nothing to one. Two things leave the computer, both to the model of an agent you connected, through that agent's provider: when `init` set up an organizer, the matter being organized and its recent words; and when you agree to an import, the text of the memory files it reads (keys, tokens and long numbers hidden). Over HTTP the server answers only assistants that hold a token you issued.
 - Every connected assistant can currently read the whole repository; per-client visibility is not designed yet (§13). Connect only assistants you would trust with all of it. What an assistant reads enters its model context and is processed by its provider.
 - Assistants are told never to record passwords, tokens or identity-document numbers (§7).
 
 ## Status and roadmap
 
-Protocol Chaos is a draft, and drafts carry no compatibility promise. Draft 0.2 grew out of daily use: its author has used an implementation of draft 0.1 every day, with several assistants on different computers sharing one repository, and draft 0.2 keeps what that use showed to matter. That implementation is not part of this repository, and is moving to draft 0.2.
+The reference server implements **draft 0.2**. The draft grew out of the author's daily use across assistants; it carries no compatibility promise. The repository includes the specification, conformance tests and the reference implementation. Reliable matching, consistent imports and real-session validation across supported clients remain work in progress.
 
 Next:
 
-- The [Hermes plugin](integrations/hermes/protocol-chaos/README.md) in Hermes's plugin catalog, once it has been in daily use for a while.
+- Continued validation of recording, organizing and retrieval in the [Hermes plugin](integrations/hermes/protocol-chaos/README.md) and other clients.
 - More agents for `init`, a few at a time: next Antigravity, Devin Desktop and Devin CLI, Cline, Kilo Code and Gemini CLI. Pull requests for others are welcome: each agent is one object in [server/install.mjs](server/install.mjs).
 - Per-client visibility: what each assistant may read (§13).
 - Recognising the same person across applications (§13).
@@ -139,13 +169,17 @@ The [changelog](CHANGELOG.md) lists every release.
 
 ## FAQ
 
-**Is this a memory product?** No, it is a protocol: an agreement on how a person's matters are kept, so that any assistant can use them. An assistant's own memory stays with that assistant; Protocol Chaos keeps the matters for the person, across assistants.
+**What can I install?** A working MCP server for your own repository, backed by an open protocol and conformance tests. You can use the reference server or implement the same contract yourself.
+
+**Do I need several assistants?** No. One assistant can use the same matters across new conversations; connecting more assistants lets them share those records.
+
+**What if my AI account becomes unavailable?** The data already saved in your repository remains on your computer or server. Another compatible assistant can use it, or you can move it to a conforming implementation. This does not recover conversations that were never saved there.
 
 **Do I need a server?** Yes, any conforming one. The reference server runs on your computer with one command. You can also write your own, and the conformance tests tell you when it is right.
 
 **Which assistants work with it?** Any MCP client. The quick start covers Claude Code, Codex, Claude Desktop, Cursor and Kiro on one computer. Over HTTP, the Remote level, assistants on other computers and cloud assistants that can reach your server share the same repository.
 
-**Where is my data?** Where your server runs, and nowhere else. See [Your data](#your-data).
+**Where is my data?** The repository is stored where you run the server. Content an assistant reads, or the organizer processes, may be sent to that assistant's model provider. See [Your data](#your-data).
 
 ## Contributing
 

@@ -7,37 +7,40 @@
 
 [English](../README.md) · 简体中文
 
-**一份开放协议：一个人生活里的那些事，由他自己掌握，他用的每个 AI 助手都能共用。**
+**让事情有脉络，让不同助手接着做，让记忆归自己。**
 
-人们跟 AI 助手说起旅行、装修、找工作、买东西、长远的愿望。每个助手听到的都只留给自己，所以同一个计划要跟每个新助手再讲一遍，换了工具就丢了。混沌协议把这些事放在一个属于用户的库里。任何兼容的助手都能读、能补充、能把里面的事连起来，换了助手，事情也还在。
+Protocol Chaos 是一份开放的记忆协议，也提供可以直接运行的 MCP 服务端。它把你正在推进的项目、旅行、学习目标等，保存成彼此关联的事情：为了什么、进展如何、属于哪件更大的事。
 
-有了混沌协议，助手可以：
+- **事情有脉络。** 把目标、它下面的具体事情和各自进展连起来。助手能跨对话跟进，应用也能据此组织清楚的事情视图。
+- **跨助手接着做。** 兼容的助手读写同一份事情，接续最新的约束和安排；每次改动都保留记录者和原话依据。
+- **积累由自己掌握。** 事情库在自己的电脑或服务器上。某个助手账号失效后，已经保存到库里的内容仍由你保管，也可以迁移到另一个合格的实现。
 
-- **接着上一个助手往下做**：读到用户几周前在另一台电脑上、跟另一个助手说过的事。
-- **保留用户的原话**：原样记下来，自己的推断标明是推断。
-- **把事连起来**：把一次旅行放到它服务的那个愿望下面，并指向它涉及的人。
-- **和别的助手一起写**：不会覆盖别人已经写下的内容，每次改动都有记录。
+只用一个助手、经常开新对话的人也能用；多个助手可以共用；开发 Personal Agent 的团队可以把它接进自己的产品。
 
-```mermaid
-flowchart LR
-  claude[Claude] <--> server
-  codex[Codex] <--> server
-  cursor[Cursor] <--> server
-  app[你自己的应用] <--> server
-  server["混沌协议服务端<br/>任何合格的实现"] --- repo[("用户的库<br/>事情 · 原话 · 实体 · 历史")]
-```
+[开始试用](#快速开始) · [给 Personal Agent 开发者](#给-personal-agent-开发者) · [阅读协议](../PROTOCOL.md)
 
 ## 快速开始
 
-需要 Node.js 20 或更高版本，macOS 或 Linux。一条命令找出这台电脑上的 Claude Code、Codex、DeepSeek Harness、Hermes、Kiro、Cursor、OpenCode、OpenClaw、Claude Desktop、GitHub Copilot（VS Code 和 Copilot CLI）和 Pi，把你选的接到同一个库上：
+需要 **Node.js 20+**，支持 **macOS / Linux**。
 
-```sh
+~~~sh
 npx protocol-chaos init
-```
+~~~
 
-每个 Agent 都会多一个名为 `protocol_chaos` 的 MCP 服务端，用它自己的名字写入。Agent 自己读事情目录、打开这句话说的那几件；模型回答前，不往这一轮里加任何东西。每处改动都有记录，改文件之前先备份：`npx protocol-chaos uninstall` 把每个文件原样改回去，`npx protocol-chaos doctor` 检查连接。已经有 `protocol_chaos` 服务端的 Agent 不动。其中一个 Agent 在后台负责整理（按 DeepSeek Harness、Claude Code、Codex 的顺序选）：某个助手记下你的话以后，用这个 Agent 的模型调一次，把话整理进那件事，所以每个 Agent 都能看到它现在到哪了。给每个 Agent 写了什么见 [server/README.md](../server/README.md#installer)，整理怎么做见[后台整理](../server/README.md#organizing-in-the-background)。接 Hermes 时还会装上[它的插件](../integrations/hermes/protocol-chaos/README.md)。
+1. **选择助手。** 安装器找出这台电脑上已有的助手，把你选的接到同一个库。
+2. **说一件长期计划。** 例如：“我想学街头摄影，不过只能周末去。”
+3. **开新对话接着聊。** 在同一个助手或另一个已接入的助手里，问自己之前说过摄影什么。之后改一次条件，再确认新对话能读到新的安排。
 
-为了让新库不是空的，`init` 还会提出导入这台电脑上各个助手已有的记忆（Claude Code 的 `CLAUDE.md` 和记忆文件夹、Codex 的 `AGENTS.md`、Hermes 的 `MEMORY.md`、Kiro 的 steering 文件等）。它先列出会读哪些文件、跳过哪些、大约花多少 token 和时间、文字会发到哪里，你同意了才导入；没有终端可问时，由你下一次对话的助手来问。这些文件只读不改。导入用整理角色的模型在后台跑（没有能在后台跑的 Agent 时，在对话里由你的助手来做），做完后任何一个助手都会把整理出的事情按树给你看。详见[导入其他助手的记忆](../server/README.md#importing-other-assistants-memories)。
+安装器也可以导入助手已有的记忆文件。它会先列出读什么、文字发到哪里、预计消耗多少模型用量，征得同意再导入；原文件只读。详见[记忆导入](../server/README.md#importing-other-assistants-memories)。
+
+安装器已适配 **Claude Code、Codex、DeepSeek Harness、Hermes、Kiro、Cursor、OpenCode、OpenClaw、Claude Desktop、GitHub Copilot 和 Pi**。各宿主的真实会话验证仍在补充，详见[接入说明](../server/README.md#installer)。
+
+安装器可以选一个已接入的助手，在后台整理新记下的原话；没有可用的后台助手时，会提示当前助手在对话中更新事情。Hermes 使用自己的插件整理。详见[后台整理](../server/README.md#organizing-in-the-background)。
+
+用 <code>npx protocol-chaos doctor</code> 检查连接，用 <code>npx protocol-chaos uninstall</code> 撤销安装配置；事情库保留。另见[你的数据](#你的数据)。
+
+<details>
+<summary>手动配置 MCP 与跨设备使用</summary>
 
 想手动接，就把参考服务端加到助手里，名字用 `protocol_chaos`：
 
@@ -61,20 +64,38 @@ npx protocol-chaos init
   { "mcpServers": { "protocol_chaos": { "command": "npx", "args": ["-y", "protocol-chaos@0.2"] } } }
   ```
 
-然后跟一个助手说一件你在打算的事，比如「我想学街头摄影，不过只能周末去」。再问另一个助手，或者开一个新对话，问它我说过摄影什么。这件事存在 `~/.protocol-chaos/repository.json` 里，一个普通的文件，归你所有。
 
-助手分布在几台电脑上，或者是云端助手：用 HTTP 运行同一个服务端，给每个助手单独一个令牌，见[远程接法](../server/README.md#remote)（英文）。
+多个设备上的助手共用时，通过 HTTP 运行服务端，给每个助手单独的令牌：见[远程接入](../server/README.md#remote)。
 
-想效果好，请给每个助手装上[常驻指引](agent-guide.md#server-instructions)：MCP 只告诉助手有哪些工具，不告诉它什么时候用。`protocol-chaos@0.2` 跟着这一版草案和它的修复走，以后的草案会是 `0.3`。
+手动配置时也应装上[常驻指引](agent-guide.md#server-instructions)，让助手知道什么时候读、什么时候记。<code>init</code> 会为支持的客户端配置这些指引。
 
-## 为什么是混沌协议
+</details>
 
-- **事情由用户掌握。** 库属于用户，不属于某个助手或厂商；每个合格的服务端都能把它整个导出、导入到别处。
-- **事情是连着的。** 看起来一次性的事，大多不是：一次旅行属于想多看看世界的愿望，一台相机服务于一个爱好。上下级关系、共同涉及的人和地方，把这些联系明确下来。
-- **原话是证据。** 用户的原话原样保存，永不修改。助手得出的一切都以它为依据，以用户的话为准。
-- **稀疏是常态。** 一件事可以只有一句话。助手记下用户说了什么，不追问用户把它补全。
-- **小而可测。** 规范只定义各个实现必须一致的部分，对服务端的每一条要求都有兼容性测试。
-- **建立在 MCP 之上。** 每项操作都是一个 MCP 工具，任何 MCP 客户端都能用合格的服务端，服务端用什么语言写都行。
+## 给 Personal Agent 开发者
+
+Personal Agent 要先持续掌握用户正在推进的事情，才能决定首页呈现什么、回答引用什么。一个长期目标、它下面的具体计划、刚发生的一次变化，含义各不相同，即使都能装进一张卡片。
+
+Protocol Chaos 为这些内容提供可以持续维护的结构。每件事有身份、当前状态、目标和约束、所属的更大事情，以及原话与修订记录。
+
+例如，一个摄影目标可以逐渐长出：
+
+~~~text
+学习街头摄影
+├── 周末摄影散步 — 进行中
+└── 制作第一本摄影小册 — 刚萌芽
+~~~
+
+同一份记录可以用于不同页面：计划页呈现目标和它下面的事情，今日页展示相关变化，对话按最新约束回答摄影小册的问题。这个例子说明可以用协议构建的应用；参考服务端提供事情记录和读写操作，**展示什么、怎样排序、如何解释出现理由，由你的产品决定。**
+
+从 <code>context_pack</code> 返回的目录开始，用 <code>event_get_protocol</code> 读取所需事情，用 <code>event_note</code> 记下新的原话。[接入指引](agent-guide.md)说明怎样维护，[协议规格](../PROTOCOL.md)定义共同遵守的约定。
+
+## 记忆怎样维护
+
+- **当前状态与历史分开。** 可以读一件事现在到哪了，也可以追溯谁依据哪句话修改过它。
+- **原话是证据。** 用户原话逐字保留；推断标明依据，用户的纠正优先。
+- **模糊是常态。** 一件事可以从一句话开始，用户不必填满一张表。
+- **关联明确记录。** 一件事可以有多个上级，不同事情也可以指向同一个人、地点或物品。
+- **约定可以被别人实现。** 规范和兼容性测试让其他实现能通过 MCP 支持相同的记录和操作。
 
 ## 协议定义了什么
 
@@ -89,6 +110,15 @@ npx protocol-chaos init
 
 客户端怎么判断一段对话涉及哪些事、怎么排序、什么时候整理，由客户端自己决定。完整规则见 **[PROTOCOL.md](../PROTOCOL.md)**（英文）。
 
+~~~mermaid
+flowchart LR
+  claude[Claude] <--> server
+  codex[Codex] <--> server
+  cursor[Cursor] <--> server
+  app[你自己的应用] <--> server
+  server["混沌协议服务端<br/>任何合格的实现"] --- repo[("用户的库<br/>事情 · 原话 · 实体 · 历史")]
+~~~
+
 ## 仓库里有什么
 
 | 路径 | |
@@ -97,7 +127,7 @@ npx protocol-chaos init
 | [conformance/](../conformance/README.md) | 兼容性测试，通过 MCP 检查任何服务端。 |
 | [server/](../server/README.md) | 参考服务端，从 Core 到远程全部级别都支持：一台电脑上用 stdio，几台电脑共用时用 HTTP。 |
 | [docs/agent-guide.md](agent-guide.md) | 助手怎么用好一个库：先回答，后记录，晚点整理。不是规范。 |
-| [integrations/hermes/](../integrations/hermes/protocol-chaos/README.md) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) 的插件：模型回答前，用户的事情已经在对话里；回答后，再把用户的话记下来。读什么由 Hermes 在本机决定。 |
+| [integrations/hermes/](../integrations/hermes/protocol-chaos/README.md) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) 的插件：会话概览、后台记录与整理，以及可选的逐轮上下文选择。 |
 
 ## 实现这份协议
 
@@ -115,18 +145,18 @@ npx protocol-chaos init
 
 ## 你的数据
 
-- 库属于它的用户，随时可以导出、搬到另一个服务端（§8.6）。
+- 参考服务端默认把事情库保存在 <code>~/.protocol-chaos/repository.json</code>。它属于你，可以导出、搬到另一个合格的服务端（§8.6）。
 - 参考服务端把库存在它所在电脑上的一个文件里。混沌协议没有自己的服务器，参考服务端也不往任何这类服务器发东西。会离开这台电脑的只有两样，都是发给你接上的某个 Agent 的模型、经由那个 Agent 的服务商：`init` 设了整理角色时，正在整理的那件事和它最近的原话；你同意导入时，导入读到的记忆文件的文字（密钥、令牌和长串数字会先遮掉）。用 HTTP 运行时，它只应答持有你发的令牌的助手。
 - 目前每个接入的助手都能读到整个库，按客户端分别授权还没设计（§13）。只接入你愿意把全部内容交给它的助手。助手读到的内容会进入它的模型上下文，由它的服务商处理。
 - 助手被要求永远不记录密码、令牌和证件号码（§7）。
 
 ## 现状与路线
 
-混沌协议还是草案，草案不承诺兼容。draft 0.2 来自每天的使用：作者每天都在用 draft 0.1 的一个实现，几台电脑上的几个助手共用一个库；0.2 留下了使用中证明有用的部分。那个实现不在这个仓库里，正在改到 draft 0.2。
+参考服务端实现的是 **draft 0.2**。这版草案来自作者跨助手的日常使用，不承诺草案间兼容。仓库包含规范、兼容性测试和参考实现。匹配准确性、导入一致性、各宿主的真实会话验证仍在继续改进。
 
 接下来：
 
-- [Hermes 插件](../integrations/hermes/protocol-chaos/README.md)在日常用过一段时间后，提交到 Hermes 的插件目录。
+- 持续验证 [Hermes 插件](../integrations/hermes/protocol-chaos/README.md)及其他客户端的记录、整理与读取。
 - `init` 接更多的 Agent，每次几家：下一批是 Antigravity、Devin Desktop 和 Devin CLI、Cline、Kilo Code、Gemini CLI。欢迎为其他 Agent 提 PR：每个 Agent 就是 [server/install.mjs](../server/install.mjs) 里的一个对象。
 - 按客户端分别授权：每个助手能读到什么（§13）。
 - 跨应用认出同一个人（§13）。
@@ -136,13 +166,17 @@ npx protocol-chaos init
 
 ## 常见问题
 
-**这是一个记忆产品吗？** 不是，它是一份协议：约定一个人的事情怎么保存，让任何助手都能用。助手自带的记忆只留在那个助手里；混沌协议替这个人保存这些事，跨助手共用。
+**我能安装什么？** 一套可以直接使用的 MCP 服务端，背后是一份开放协议和兼容性测试。你可以使用这个参考服务端，也可以自己实现相同的约定。
+
+**只用一个助手有用吗？** 有。同一个助手的新对话可以接着使用已有事情；接入更多助手以后，它们共用这些记录。
+
+**AI 账号失效了怎么办？** 已经保存在事情库里的数据仍在自己的电脑或服务器上，可以交给另一个兼容助手继续使用，也可以迁到另一个合格实现。尚未保存到库里的聊天记录，不在这个范围内。
 
 **需要服务端吗？** 需要，任何合格的都行。参考服务端在你电脑上用一条命令就能跑起来。你也可以自己写一个，兼容性测试会告诉你写对了没有。
 
 **哪些助手能用？** 任何 MCP 客户端。快速开始里写了一台电脑上的 Claude Code、Codex、Claude Desktop、Cursor 和 Kiro。用 HTTP（远程级别）运行时，其他电脑上的助手、能连到你服务器的云端助手，也能共用同一个库。
 
-**我的数据在哪？** 在你的服务端运行的地方，不在别处。见[你的数据](#你的数据)。
+**我的数据在哪？** 事情库保存在你运行服务端的地方；助手读取、后台整理处理的内容，可能会发给相应助手的模型服务商。见[你的数据](#你的数据)。
 
 ## 参与
 
